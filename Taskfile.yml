@@ -1,0 +1,49 @@
+version: "3"
+
+tasks:
+  models:list:
+    desc: List available models
+    cmds:
+      - pnpm openclaw models list
+
+  models:list:anthropic:
+    desc: List Anthropic models only
+    cmds:
+      - pnpm openclaw models list | grep anthropic
+
+  models:current:
+    desc: Show current default model
+    cmds:
+      - pnpm openclaw config get agents.defaults.model.primary 2>/dev/null || echo "(not set - using provider default)"
+
+  config:agents:
+    desc: Show full agents config section
+    cmds:
+      - pnpm openclaw config get agents
+
+  status:
+    desc: Show gateway status including active model
+    cmds:
+      - pnpm openclaw status
+
+  models:set:sonnet:
+    desc: Set model to Claude Sonnet 4.5
+    cmds:
+      - pnpm openclaw models set anthropic/claude-sonnet-4-5
+
+  models:set:opus:
+    desc: Set model to Claude Opus 4.5
+    cmds:
+      - pnpm openclaw models set anthropic/claude-opus-4-5
+
+  gateway:restart:
+    desc: Restart the gateway
+    cmds:
+      - tmux send-keys -t gateway C-c
+      - sleep 2
+      - tmux new -s gateway -d 'pnpm openclaw gateway --tailscale serve'
+  
+  tmux:attach:
+    desc: Attach to the tmux session
+    cmds:
+      - tmux attach -t gateway
