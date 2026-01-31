@@ -1,6 +1,16 @@
 version: "3"
 
 tasks:
+  disk:
+    desc: Check disk space
+    cmds:
+      - df -h
+    
+  memory:
+    desc: Check memory usage
+    cmds:
+      - free -h
+
   models:list:
     desc: List available models
     cmds:
@@ -36,13 +46,24 @@ tasks:
     cmds:
       - pnpm openclaw models set anthropic/claude-opus-4-5
 
-  gateway:restart:
+  restart:
     desc: Restart the gateway
     cmds:
       - tmux kill-session -t gateway 2>/dev/null || true
-      - tmux new -s gateway -d 'pnpm openclaw gateway --tailscale serve'
-  
+      - sleep 2
+      - tmux new -s gateway -d 'pnpm openclaw gateway --tailscale serve 2>&1 | tee ~/.openclaw/gateway.log'
+
+  logs:
+    desc: Follow gateway logs
+    cmds:
+      - tail -f ~/.openclaw/gateway.log
+
   tmux:attach:
     desc: Attach to the tmux session
     cmds:
       - tmux attach -t gateway
+    
+  containers:
+    desc: List containers
+    cmds:
+      - docker ps
