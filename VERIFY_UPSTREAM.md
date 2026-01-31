@@ -4,7 +4,7 @@ Process for checking if upstream changes are safe to merge onto your local branc
 
 **TL;DR after merging upstream:**
 ```bash
-git fetch upstream && git merge upstream/main && pnpm install && rm -rf dist && pnpm build
+git fetch upstream && git merge upstream/main && pnpm install && rm -rf dist && pnpm build && pnpm ui:build
 ```
 
 ## Check Branch Status
@@ -91,6 +91,7 @@ pnpm install
 # Clean stale build artifacts and rebuild
 rm -rf dist
 pnpm build
+pnpm ui:build
 
 # Restart gateway
 tmux kill-session -t gateway 2>/dev/null
@@ -154,6 +155,13 @@ Symptoms: `Cannot find module 'dist/entry.js'` or import errors referencing old 
 ```bash
 rm -rf dist
 pnpm build
+```
+
+### Missing Control UI Assets
+Symptoms: Browser shows "Control UI assets not found".
+
+```bash
+pnpm ui:build
 ```
 
 ## Interrogate Your Local Changes
