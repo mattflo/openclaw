@@ -46,6 +46,11 @@ tasks:
     cmds:
       - pnpm openclaw models set anthropic/claude-opus-4-5
 
+  models:set:kimi:
+    desc: Set model to Kimi K2.5 via OpenRouter
+    cmds:
+      - pnpm openclaw models set openrouter/moonshotai/kimi-k2.5
+
   restart:
     desc: Restart the gateway
     cmds:

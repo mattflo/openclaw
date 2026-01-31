@@ -16,7 +16,9 @@ Node managed via nvm: `~/.nvm/versions/node/v24.13.0/`
 
 ## Config
 
-Location: `~/.clawdbot/moltbot.json`
+Location: `~/.openclaw/openclaw.json`
+
+Note: `~/.clawdbot` and `~/.moltbot` are symlinks to `~/.openclaw` for backwards compatibility.
 
 Key gateway settings:
 ```json
@@ -58,7 +60,7 @@ Web console: `https://<hostname>/`
 **Tailscale connections** (phone, other devices) require manual pairing approval:
 ```bash
 # List pending requests
-cat ~/.clawdbot/devices/pairing-requests.json
+cat ~/.openclaw/devices/pending.json
 
 # Approve by request ID
 pnpm moltbot devices approve <request-id>
