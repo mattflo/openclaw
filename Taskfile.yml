@@ -39,8 +39,7 @@ tasks:
   gateway:restart:
     desc: Restart the gateway
     cmds:
-      - tmux send-keys -t gateway C-c
-      - sleep 2
+      - tmux kill-session -t gateway 2>/dev/null || true
       - tmux new -s gateway -d 'pnpm openclaw gateway --tailscale serve'
   
   tmux:attach:
