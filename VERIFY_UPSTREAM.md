@@ -1,7 +1,11 @@
-
 # Verify Upstream Changes Are Compatible
 
-Process for checking if upstream changes are safe to rebase onto your local branch.
+Process for checking if upstream changes are safe to merge onto your local branch.
+
+**TL;DR after merging upstream:**
+```bash
+git fetch upstream && git merge upstream/main && pnpm install && rm -rf dist && pnpm build
+```
 
 ## Check Branch Status
 
@@ -75,20 +79,81 @@ Your config (`~/.openclaw/openclaw.json`) should have:
 ## Merge Upstream and Push
 
 ```bash
+# Fetch latest
+git fetch upstream
+
 # Merge upstream (creates merge commit, avoids force-push issues)
 git merge upstream/main
 
-# Push to your fork
-git push origin my-setup
+# CRITICAL: Update dependencies after merge
+pnpm install
 
-# Verify gateway still works
-pnpm moltbot channels status --probe
+# Clean stale build artifacts and rebuild
+rm -rf dist
+pnpm build
 
-# Check paired devices
-pnpm moltbot devices list
+# Restart gateway
+tmux kill-session -t gateway 2>/dev/null
+tmux new -s gateway -d 'pnpm openclaw gateway --tailscale serve 2>&1 | tee ~/.openclaw/gateway.log'
 
-# If devices need re-approval
-pnpm moltbot devices approve <request-id>
+# Watch logs for errors
+tail -f ~/.openclaw/gateway.log
+```
+
+## Post-Merge Verification
+
+After merging, ALWAYS:
+
+1. **Run `pnpm install`** - Upstream may have updated package versions
+2. **Clean and rebuild** - Stale dist/ files cause confusing import errors
+3. **Check the logs** - TypeScript errors mean the merge or deps are broken
+
+```bash
+# Verify package versions match upstream
+git show upstream/main:package.json | grep pi-coding-agent
+cat node_modules/@mariozechner/pi-coding-agent/package.json | grep '"version"'
+```
+
+## Common Merge Problems
+
+### Bad Conflict Resolution
+If merge conflicts were resolved incorrectly (took wrong version), you'll see TypeScript errors about missing exports or wrong types. Fix by resetting specific files to upstream:
+
+```bash
+# Check what upstream has vs your merge
+git diff upstream/main -- path/to/broken/file.ts
+
+# Reset file to upstream version
+git checkout upstream/main -- path/to/broken/file.ts
+git commit -m "fix: restore upstream changes"
+```
+
+Or redo the merge entirely:
+```bash
+git reset --hard <commit-before-merge>
+git merge upstream/main
+# Then force push: git push --force-with-lease origin my-setup
+# On other machines: git fetch origin && git reset --hard origin/my-setup
+```
+
+### Stale node_modules
+Symptoms: Errors like `Module does not provide an export named 'X'` where X definitely exists in upstream code.
+
+```bash
+# Check installed vs required version
+cat node_modules/@mariozechner/pi-coding-agent/package.json | grep '"version"'
+git show upstream/main:package.json | grep pi-coding-agent
+
+# Fix: reinstall
+pnpm install
+```
+
+### Stale dist/ Files
+Symptoms: `Cannot find module 'dist/entry.js'` or import errors referencing old exports.
+
+```bash
+rm -rf dist
+pnpm build
 ```
 
 ## Interrogate Your Local Changes
