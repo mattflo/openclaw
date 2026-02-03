@@ -38,6 +38,10 @@ Key gateway settings:
 }
 ```
 
+## Tools
+
+Tools run directly on host (`sandbox.mode: "off"`). Browser uses headless Brave via `browser.defaultProfile: "openclaw"`.
+
 ## Gateway
 
 Runs in tmux session `gateway`:

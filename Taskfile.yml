@@ -51,6 +51,11 @@ tasks:
     cmds:
       - pnpm openclaw models set openrouter/moonshotai/kimi-k2.5
 
+  models:set:kimi-fw:
+    desc: Set model to Kimi K2.5 via Fireworks (direct)
+    cmds:
+      - pnpm openclaw models set fireworks/accounts/fireworks/models/kimi-k2p5
+
   restart:
     desc: Restart the gateway
     cmds:
@@ -68,6 +73,11 @@ tasks:
     cmds:
       - tmux attach -t gateway
     
+  cron:list:
+    desc: List cron jobs
+    cmds:
+      - pnpm openclaw cron list
+
   containers:
     desc: List containers
     cmds:
