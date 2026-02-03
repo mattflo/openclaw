@@ -9,10 +9,8 @@ RUN apt-get update \
     curl \
     git \
     jq \
-    khal \
     python3 \
     ripgrep \
-    vdirsyncer \
   && rm -rf /var/lib/apt/lists/*
 
 CMD ["sleep", "infinity"]
