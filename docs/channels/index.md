@@ -3,6 +3,7 @@ summary: "Messaging platforms OpenClaw can connect to"
 read_when:
   - You want to choose a chat channel for OpenClaw
   - You need a quick overview of supported messaging platforms
+title: "Chat Channels"
 ---
 
 # Chat Channels
@@ -16,6 +17,7 @@ Text is supported everywhere; media and reactions vary by channel.
 - [Telegram](/channels/telegram) — Bot API via grammY; supports groups.
 - [Discord](/channels/discord) — Discord Bot API + Gateway; supports servers, channels, and DMs.
 - [Slack](/channels/slack) — Bolt SDK; workspace apps.
+- [Feishu](/channels/feishu) — Feishu/Lark bot via WebSocket (plugin, installed separately).
 - [Google Chat](/channels/googlechat) — Google Chat API app via HTTP webhook.
 - [Mattermost](/channels/mattermost) — Bot API + WebSocket; channels, groups, DMs (plugin, installed separately).
 - [Signal](/channels/signal) — signal-cli; privacy-focused.
