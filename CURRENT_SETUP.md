@@ -6,10 +6,11 @@
 ssh cb  # <hostname>
 ```
 
-Moltbot runs from source:
+OpenClaw runs from source:
+
 ```bash
-cd /home/matt/code/moltbot
-pnpm moltbot <command>
+cd /home/matt/code/openclaw
+pnpm openclaw <command>
 ```
 
 Node managed via nvm: `~/.nvm/versions/node/v24.13.0/`
@@ -21,6 +22,7 @@ Location: `~/.openclaw/openclaw.json`
 Note: `~/.clawdbot` and `~/.moltbot` are symlinks to `~/.openclaw` for backwards compatibility.
 
 Key gateway settings:
+
 ```json
 {
   "gateway": {
@@ -45,14 +47,16 @@ Tools run directly on host (`sandbox.mode: "off"`). Browser uses headless Brave 
 ## Gateway
 
 Runs in tmux session `gateway`:
+
 ```bash
 tmux attach -t gateway          # View logs
 tmux send-keys -t gateway C-c   # Stop
 ```
 
 Start command:
+
 ```bash
-tmux new -s gateway -d 'cd ~/code/moltbot && pnpm run moltbot gateway --tailscale serve'
+tmux new -s gateway -d 'cd ~/code/openclaw && pnpm run openclaw gateway --tailscale serve'
 ```
 
 ## Remote Access via Tailscale
@@ -62,15 +66,16 @@ Web console: `https://<hostname>/`
 **Local connections** (same machine, localhost) auto-approve device pairing.
 
 **Tailscale connections** (phone, other devices) require manual pairing approval:
+
 ```bash
 # List pending requests
 cat ~/.openclaw/devices/pending.json
 
 # Approve by request ID
-pnpm moltbot devices approve <request-id>
+pnpm openclaw devices approve <request-id>
 
 # List paired devices
-pnpm moltbot devices list
+pnpm openclaw devices list
 ```
 
 ## Paired Devices
