@@ -6,11 +6,10 @@
 ssh cb  # <hostname>
 ```
 
-OpenClaw runs from source:
+OpenClaw runs from source. Use direnv exec . to load env vars:
 
 ```bash
-cd /home/matt/code/openclaw
-pnpm openclaw <command>
+cd /home/matt/code/openclaw && direnv exec . pnpm openclaw <command>
 ```
 
 Node managed via nvm: `~/.nvm/versions/node/v24.13.0/`
