@@ -4,9 +4,13 @@ export type BrowserProfileConfig = {
   /** CDP URL for this profile (use for remote Chrome). */
   cdpUrl?: string;
   /** Profile driver (default: openclaw). */
-  driver?: "openclaw" | "extension";
+  driver?: "openclaw" | "extension" | "browserbase";
   /** Profile color (hex). Auto-assigned at creation. */
   color: string;
+  /** BrowserBase API key (for driver=browserbase). Use ${BROWSERBASE_API_KEY} for env substitution. */
+  apiKey?: string;
+  /** BrowserBase project ID (for driver=browserbase). Use ${BROWSERBASE_PROJECT_ID} for env substitution. */
+  projectId?: string;
 };
 export type BrowserSnapshotDefaults = {
   /** Default snapshot mode (applies when mode is not provided). */

@@ -39,7 +39,9 @@ export type ResolvedBrowserProfile = {
   cdpHost: string;
   cdpIsLoopback: boolean;
   color: string;
-  driver: "openclaw" | "extension";
+  driver: "openclaw" | "extension" | "browserbase";
+  browserbaseApiKey?: string;
+  browserbaseProjectId?: string;
 };
 
 function isLoopbackHost(host: string) {
@@ -240,11 +242,38 @@ export function resolveProfile(
     return null;
   }
 
+  const driver =
+    profile.driver === "extension"
+      ? "extension"
+      : profile.driver === "browserbase"
+        ? "browserbase"
+        : "openclaw";
+
+  if (driver === "browserbase") {
+    const apiKey = profile.apiKey?.trim() ?? "";
+    const projectId = profile.projectId?.trim() ?? "";
+    if (!apiKey || !projectId) {
+      throw new Error(
+        `Profile "${profileName}" (driver=browserbase) must set apiKey and projectId.`,
+      );
+    }
+    return {
+      name: profileName,
+      cdpPort: 0,
+      cdpUrl: "http://browserbase.invalid",
+      cdpHost: "browserbase.invalid",
+      cdpIsLoopback: false,
+      color: profile.color,
+      driver: "browserbase",
+      browserbaseApiKey: apiKey,
+      browserbaseProjectId: projectId,
+    };
+  }
+
   const rawProfileUrl = profile.cdpUrl?.trim() ?? "";
   let cdpHost = resolved.cdpHost;
   let cdpPort = profile.cdpPort ?? 0;
   let cdpUrl = "";
-  const driver = profile.driver === "extension" ? "extension" : "openclaw";
 
   if (rawProfileUrl) {
     const parsed = parseHttpUrl(rawProfileUrl, `browser.profiles.${profileName}.cdpUrl`);

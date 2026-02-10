@@ -20,7 +20,7 @@ export function registerBrowserAgentStorageRoutes(
         return;
       }
       const result = await pw.cookiesGetViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
       });
       res.json({ ok: true, targetId: tab.targetId, ...result });
@@ -50,7 +50,7 @@ export function registerBrowserAgentStorageRoutes(
         return;
       }
       await pw.cookiesSetViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         cookie: {
           name: toStringOrEmpty(cookie.name),
@@ -87,7 +87,7 @@ export function registerBrowserAgentStorageRoutes(
         return;
       }
       await pw.cookiesClearViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
       });
       res.json({ ok: true, targetId: tab.targetId });
@@ -114,7 +114,7 @@ export function registerBrowserAgentStorageRoutes(
         return;
       }
       const result = await pw.storageGetViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         kind,
         key: key.trim() || undefined,
@@ -148,7 +148,7 @@ export function registerBrowserAgentStorageRoutes(
         return;
       }
       await pw.storageSetViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         kind,
         key,
@@ -178,7 +178,7 @@ export function registerBrowserAgentStorageRoutes(
         return;
       }
       await pw.storageClearViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         kind,
       });
@@ -206,7 +206,7 @@ export function registerBrowserAgentStorageRoutes(
         return;
       }
       await pw.setOfflineViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         offline,
       });
@@ -243,7 +243,7 @@ export function registerBrowserAgentStorageRoutes(
         return;
       }
       await pw.setExtraHTTPHeadersViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         headers: parsed,
       });
@@ -270,7 +270,7 @@ export function registerBrowserAgentStorageRoutes(
         return;
       }
       await pw.setHttpCredentialsViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         username,
         password,
@@ -301,7 +301,7 @@ export function registerBrowserAgentStorageRoutes(
         return;
       }
       await pw.setGeolocationViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         latitude,
         longitude,
@@ -339,7 +339,7 @@ export function registerBrowserAgentStorageRoutes(
         return;
       }
       await pw.emulateMediaViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         colorScheme,
       });
@@ -367,7 +367,7 @@ export function registerBrowserAgentStorageRoutes(
         return;
       }
       await pw.setTimezoneViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         timezoneId,
       });
@@ -395,7 +395,7 @@ export function registerBrowserAgentStorageRoutes(
         return;
       }
       await pw.setLocaleViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         locale,
       });
@@ -423,7 +423,7 @@ export function registerBrowserAgentStorageRoutes(
         return;
       }
       await pw.setDeviceViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         name,
       });

@@ -38,7 +38,7 @@ export function registerBrowserAgentActRoutes(
 
     try {
       const tab = await profileCtx.ensureTabAvailable(targetId);
-      const cdpUrl = profileCtx.profile.cdpUrl;
+      const cdpUrl = profileCtx.getCdpUrl();
       const pw = await requirePwAi(res, `act:${kind}`);
       if (!pw) {
         return;
@@ -358,7 +358,7 @@ export function registerBrowserAgentActRoutes(
           return jsonError(res, 400, "ref cannot be combined with inputRef/element");
         }
         await pw.setInputFilesViaPlaywright({
-          cdpUrl: profileCtx.profile.cdpUrl,
+          cdpUrl: profileCtx.getCdpUrl(),
           targetId: tab.targetId,
           inputRef,
           element,
@@ -366,14 +366,14 @@ export function registerBrowserAgentActRoutes(
         });
       } else {
         await pw.armFileUploadViaPlaywright({
-          cdpUrl: profileCtx.profile.cdpUrl,
+          cdpUrl: profileCtx.getCdpUrl(),
           targetId: tab.targetId,
           paths,
           timeoutMs: timeoutMs ?? undefined,
         });
         if (ref) {
           await pw.clickViaPlaywright({
-            cdpUrl: profileCtx.profile.cdpUrl,
+            cdpUrl: profileCtx.getCdpUrl(),
             targetId: tab.targetId,
             ref,
           });
@@ -405,7 +405,7 @@ export function registerBrowserAgentActRoutes(
         return;
       }
       await pw.armDialogViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         accept,
         promptText,
@@ -433,7 +433,7 @@ export function registerBrowserAgentActRoutes(
         return;
       }
       const result = await pw.waitForDownloadViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         path: out,
         timeoutMs: timeoutMs ?? undefined,
@@ -467,7 +467,7 @@ export function registerBrowserAgentActRoutes(
         return;
       }
       const result = await pw.downloadViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         ref,
         path: out,
@@ -499,7 +499,7 @@ export function registerBrowserAgentActRoutes(
         return;
       }
       const result = await pw.responseBodyViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         url,
         timeoutMs: timeoutMs ?? undefined,
@@ -529,7 +529,7 @@ export function registerBrowserAgentActRoutes(
         return;
       }
       await pw.highlightViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         ref,
       });

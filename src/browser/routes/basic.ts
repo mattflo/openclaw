@@ -58,7 +58,7 @@ export function registerBrowserBasicRoutes(app: BrowserRouteRegistrar, ctx: Brow
       cdpHttp,
       pid: profileState?.running?.pid ?? null,
       cdpPort: profileCtx.profile.cdpPort,
-      cdpUrl: profileCtx.profile.cdpUrl,
+      cdpUrl: profileCtx.getCdpUrl(),
       chosenBrowser: profileState?.running?.exe.kind ?? null,
       detectedBrowser,
       detectedExecutablePath,

@@ -25,7 +25,7 @@ export function registerBrowserAgentDebugRoutes(
         return;
       }
       const messages = await pw.getConsoleMessagesViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         level: level.trim() || undefined,
       });
@@ -50,7 +50,7 @@ export function registerBrowserAgentDebugRoutes(
         return;
       }
       const result = await pw.getPageErrorsViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         clear,
       });
@@ -76,7 +76,7 @@ export function registerBrowserAgentDebugRoutes(
         return;
       }
       const result = await pw.getNetworkRequestsViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         filter: filter.trim() || undefined,
         clear,
@@ -104,7 +104,7 @@ export function registerBrowserAgentDebugRoutes(
         return;
       }
       await pw.traceStartViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         screenshots,
         snapshots,
@@ -135,7 +135,7 @@ export function registerBrowserAgentDebugRoutes(
       await fs.mkdir(dir, { recursive: true });
       const tracePath = out.trim() || path.join(dir, `browser-trace-${id}.zip`);
       await pw.traceStopViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         path: tracePath,
       });

@@ -75,7 +75,7 @@ export async function fetchBrowserJson<T>(
         // keep as string
       }
     }
-    const dispatchPromise = dispatcher.dispatch({
+    const result = await dispatcher.dispatch({
       method:
         init?.method?.toUpperCase() === "DELETE"
           ? "DELETE"
@@ -87,15 +87,6 @@ export async function fetchBrowserJson<T>(
       body,
     });
 
-    const result = await (timeoutMs
-      ? Promise.race([
-          dispatchPromise,
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("timed out")), timeoutMs),
-          ),
-        ])
-      : dispatchPromise);
-
     if (result.status >= 400) {
       const message =
         result.body && typeof result.body === "object" && "error" in result.body
@@ -105,6 +96,10 @@ export async function fetchBrowserJson<T>(
     }
     return result.body as T;
   } catch (err) {
+    const msg = String(err);
+    if (msg.includes("BrowserBase")) {
+      throw err instanceof Error ? err : new Error(msg);
+    }
     throw enhanceBrowserFetchError(url, err, timeoutMs);
   }
 }

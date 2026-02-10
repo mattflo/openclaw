@@ -44,7 +44,7 @@ export function registerBrowserAgentSnapshotRoutes(
         return;
       }
       const result = await pw.navigateViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
         url,
       });
@@ -68,7 +68,7 @@ export function registerBrowserAgentSnapshotRoutes(
         return;
       }
       const pdf = await pw.pdfViaPlaywright({
-        cdpUrl: profileCtx.profile.cdpUrl,
+        cdpUrl: profileCtx.getCdpUrl(),
         targetId: tab.targetId,
       });
       await ensureMediaDir();
@@ -116,7 +116,7 @@ export function registerBrowserAgentSnapshotRoutes(
           return;
         }
         const snap = await pw.takeScreenshotViaPlaywright({
-          cdpUrl: profileCtx.profile.cdpUrl,
+          cdpUrl: profileCtx.getCdpUrl(),
           targetId: tab.targetId,
           ref,
           element,
@@ -216,7 +216,7 @@ export function registerBrowserAgentSnapshotRoutes(
 
         const snap = wantsRoleSnapshot
           ? await pw.snapshotRoleViaPlaywright({
-              cdpUrl: profileCtx.profile.cdpUrl,
+              cdpUrl: profileCtx.getCdpUrl(),
               targetId: tab.targetId,
               selector: selector.trim() || undefined,
               frameSelector: frameSelector.trim() || undefined,
@@ -229,7 +229,7 @@ export function registerBrowserAgentSnapshotRoutes(
             })
           : await pw
               .snapshotAiViaPlaywright({
-                cdpUrl: profileCtx.profile.cdpUrl,
+                cdpUrl: profileCtx.getCdpUrl(),
                 targetId: tab.targetId,
                 ...(typeof resolvedMaxChars === "number" ? { maxChars: resolvedMaxChars } : {}),
               })
@@ -237,7 +237,7 @@ export function registerBrowserAgentSnapshotRoutes(
                 // Public-API fallback when Playwright's private _snapshotForAI is missing.
                 if (String(err).toLowerCase().includes("_snapshotforai")) {
                   return await pw.snapshotRoleViaPlaywright({
-                    cdpUrl: profileCtx.profile.cdpUrl,
+                    cdpUrl: profileCtx.getCdpUrl(),
                     targetId: tab.targetId,
                     selector: selector.trim() || undefined,
                     frameSelector: frameSelector.trim() || undefined,
@@ -253,7 +253,7 @@ export function registerBrowserAgentSnapshotRoutes(
               });
         if (labels) {
           const labeled = await pw.screenshotWithLabelsViaPlaywright({
-            cdpUrl: profileCtx.profile.cdpUrl,
+            cdpUrl: profileCtx.getCdpUrl(),
             targetId: tab.targetId,
             refs: "refs" in snap ? snap.refs : {},
             type: "png",
@@ -303,7 +303,7 @@ export function registerBrowserAgentSnapshotRoutes(
                   return null;
                 }
                 return await pw.snapshotAriaViaPlaywright({
-                  cdpUrl: profileCtx.profile.cdpUrl,
+                  cdpUrl: profileCtx.getCdpUrl(),
                   targetId: tab.targetId,
                   limit,
                 });

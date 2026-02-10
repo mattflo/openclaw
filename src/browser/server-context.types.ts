@@ -5,12 +5,24 @@ import type { ResolvedBrowserConfig, ResolvedBrowserProfile } from "./config.js"
 
 export type { BrowserTab };
 
+export type BrowserBaseRunning = {
+  type: "browserbase";
+  sessionId: string;
+  cdpUrl: string;
+};
+
+export function isBrowserBaseRunning(
+  r: RunningChrome | BrowserBaseRunning | null,
+): r is BrowserBaseRunning {
+  return r != null && typeof r === "object" && (r as BrowserBaseRunning).type === "browserbase";
+}
+
 /**
  * Runtime state for a single profile's Chrome instance.
  */
 export type ProfileRuntimeState = {
   profile: ResolvedBrowserProfile;
-  running: RunningChrome | null;
+  running: RunningChrome | BrowserBaseRunning | null;
   /** Sticky tab selection when callers omit targetId (keeps snapshot+act consistent). */
   lastTargetId?: string | null;
 };
@@ -46,6 +58,8 @@ export type BrowserRouteContext = {
 
 export type ProfileContext = {
   profile: ResolvedBrowserProfile;
+  /** Effective CDP URL (runtime session URL for browserbase, else profile.cdpUrl). */
+  getCdpUrl: () => string;
   ensureBrowserAvailable: () => Promise<void>;
   ensureTabAvailable: (targetId?: string) => Promise<BrowserTab>;
   isHttpReachable: (timeoutMs?: number) => Promise<boolean>;
