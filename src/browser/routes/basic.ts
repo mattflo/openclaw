@@ -1,6 +1,7 @@
 import { resolveBrowserExecutableForPlatform } from "../chrome.executables.js";
 import { createBrowserProfilesService } from "../profiles-service.js";
 import type { BrowserRouteContext, ProfileContext } from "../server-context.js";
+import { isBrowserBaseRunning } from "../server-context.types.js";
 import { resolveProfileContext } from "./agent.shared.js";
 import type { BrowserRequest, BrowserResponse, BrowserRouteRegistrar } from "./types.js";
 import { getProfileContext, jsonError, toStringOrEmpty } from "./utils.js";
@@ -74,14 +75,23 @@ export function registerBrowserBasicRoutes(app: BrowserRouteRegistrar, ctx: Brow
       running: cdpReady,
       cdpReady,
       cdpHttp,
-      pid: profileState?.running?.pid ?? null,
+      pid:
+        profileState?.running && !isBrowserBaseRunning(profileState.running)
+          ? profileState.running.pid
+          : null,
       cdpPort: profileCtx.profile.cdpPort,
-      cdpUrl: profileCtx.profile.cdpUrl,
-      chosenBrowser: profileState?.running?.exe.kind ?? null,
+      cdpUrl: profileCtx.getCdpUrl(),
+      chosenBrowser:
+        profileState?.running && !isBrowserBaseRunning(profileState.running)
+          ? profileState.running.exe.kind
+          : null,
       detectedBrowser,
       detectedExecutablePath,
       detectError,
-      userDataDir: profileState?.running?.userDataDir ?? null,
+      userDataDir:
+        profileState?.running && !isBrowserBaseRunning(profileState.running)
+          ? profileState.running.userDataDir
+          : null,
       color: profileCtx.profile.color,
       headless: current.resolved.headless,
       noSandbox: current.resolved.noSandbox,

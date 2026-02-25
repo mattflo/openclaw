@@ -239,6 +239,10 @@ export async function fetchBrowserJson<T>(
     }
     return result.body as T;
   } catch (err) {
+    const msg = String(err);
+    if (msg.includes("BrowserBase")) {
+      throw err instanceof Error ? err : new Error(msg);
+    }
     throw enhanceBrowserFetchError(url, err, timeoutMs);
   }
 }

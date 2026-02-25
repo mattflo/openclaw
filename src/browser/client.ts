@@ -104,7 +104,7 @@ export async function browserStatus(
 ): Promise<BrowserStatus> {
   const q = buildProfileQuery(opts?.profile);
   return await fetchBrowserJson<BrowserStatus>(withBaseUrl(baseUrl, `/${q}`), {
-    timeoutMs: 1500,
+    timeoutMs: 10000,
   });
 }
 
@@ -112,7 +112,7 @@ export async function browserProfiles(baseUrl?: string): Promise<ProfileStatus[]
   const res = await fetchBrowserJson<{ profiles: ProfileStatus[] }>(
     withBaseUrl(baseUrl, `/profiles`),
     {
-      timeoutMs: 3000,
+      timeoutMs: 15000,
     },
   );
   return res.profiles ?? [];
@@ -208,7 +208,7 @@ export async function browserTabs(
   const q = buildProfileQuery(opts?.profile);
   const res = await fetchBrowserJson<{ running: boolean; tabs: BrowserTab[] }>(
     withBaseUrl(baseUrl, `/tabs${q}`),
-    { timeoutMs: 3000 },
+    { timeoutMs: 15000 },
   );
   return res.tabs ?? [];
 }
