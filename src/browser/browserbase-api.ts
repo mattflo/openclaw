@@ -16,7 +16,7 @@ export async function createBrowserBaseSession(params: {
       "Content-Type": "application/json",
       "X-BB-API-Key": params.apiKey,
     },
-    body: JSON.stringify({ projectId: params.projectId }),
+    body: JSON.stringify({ projectId: params.projectId, keepAlive: true }),
   });
   if (!res.ok) {
     const text = await res.text();

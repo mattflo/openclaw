@@ -24,8 +24,8 @@ export function getBrowserProfileCapabilities(
       usesPersistentPlaywright: true,
       requiresRelay: false,
       requiresAttachedTab: false,
-      supportsPerTabWs: true,
-      supportsJsonTabEndpoints: true,
+      supportsPerTabWs: false,
+      supportsJsonTabEndpoints: false,
       supportsReset: false,
       supportsManagedTabLimit: false,
     };
