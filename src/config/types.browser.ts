@@ -4,7 +4,9 @@ export type BrowserProfileConfig = {
   /** CDP URL for this profile (use for remote Chrome). */
   cdpUrl?: string;
   /** Profile driver (default: openclaw). */
-  driver?: "openclaw" | "extension" | "browserbase";
+  driver?: "openclaw" | "clawd" | "extension" | "browserbase";
+  /** If true, never launch a browser for this profile; only attach. Falls back to browser.attachOnly. */
+  attachOnly?: boolean;
   /** Profile color (hex). Auto-assigned at creation. */
   color: string;
   /** BrowserBase API key (for driver=browserbase). Use ${BROWSERBASE_API_KEY} for env substitution. */
@@ -52,6 +54,8 @@ export type BrowserConfig = {
   noSandbox?: boolean;
   /** If true: never launch; only attach to an existing browser. Default: false */
   attachOnly?: boolean;
+  /** Starting local CDP port for auto-assigned browser profiles. Default derives from gateway port. */
+  cdpPortRangeStart?: number;
   /** Default profile to use when profile param is omitted. Default: "chrome" */
   defaultProfile?: string;
   /** Named browser profiles with explicit CDP ports or URLs. */
@@ -66,4 +70,10 @@ export type BrowserConfig = {
    * Example: ["--window-size=1920,1080", "--disable-infobars"]
    */
   extraArgs?: string[];
+  /**
+   * Bind address for the Chrome extension relay server.
+   * Default: "127.0.0.1". Set to "0.0.0.0" for WSL2 or other environments where
+   * the relay must be reachable from a different network namespace.
+   */
+  relayBindHost?: string;
 };

@@ -1,11 +1,16 @@
+import { stopOpenClawChrome } from "./chrome.js";
 import type { ResolvedBrowserConfig } from "./config.js";
 import { resolveProfile } from "./config.js";
-import { ensureChromeExtensionRelayServer } from "./extension-relay.js";
+import {
+  ensureChromeExtensionRelayServer,
+  stopChromeExtensionRelayServer,
+} from "./extension-relay.js";
 import {
   type BrowserServerState,
   createBrowserRouteContext,
   listKnownProfileNames,
 } from "./server-context.js";
+import { isBrowserBaseRunning } from "./server-context.types.js";
 
 export async function ensureExtensionRelayForProfiles(params: {
   resolved: ResolvedBrowserConfig;
@@ -16,7 +21,10 @@ export async function ensureExtensionRelayForProfiles(params: {
     if (!profile || profile.driver !== "extension") {
       continue;
     }
-    await ensureChromeExtensionRelayServer({ cdpUrl: profile.cdpUrl }).catch((err) => {
+    await ensureChromeExtensionRelayServer({
+      cdpUrl: profile.cdpUrl,
+      bindHost: params.resolved.relayBindHost,
+    }).catch((err) => {
       params.onWarn(`Chrome extension relay init failed for profile "${name}": ${String(err)}`);
     });
   }
@@ -37,6 +45,20 @@ export async function stopKnownBrowserProfiles(params: {
   try {
     for (const name of listKnownProfileNames(current)) {
       try {
+        const runtime = current.profiles.get(name);
+        if (runtime?.running) {
+          if (!isBrowserBaseRunning(runtime.running)) {
+            await stopOpenClawChrome(runtime.running);
+          }
+          runtime.running = null;
+          continue;
+        }
+        if (runtime?.profile.driver === "extension") {
+          await stopChromeExtensionRelayServer({ cdpUrl: runtime.profile.cdpUrl }).catch(
+            () => false,
+          );
+          continue;
+        }
         await ctx.forProfile(name).stopRunningBrowser();
       } catch {
         // ignore
