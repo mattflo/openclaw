@@ -364,6 +364,7 @@ export const OpenClawSchema = z
                     z.literal("openclaw"),
                     z.literal("clawd"),
                     z.literal("extension"),
+                    z.literal("existing-session"),
                     z.literal("browserbase"),
                   ])
                   .optional(),
@@ -375,8 +376,14 @@ export const OpenClawSchema = z
               .strict()
               .refine(
                 (value) =>
-                  value.cdpPort != null || value.cdpUrl != null || value.driver === "browserbase",
-                { message: "Profile must set cdpPort, cdpUrl, or driver=browserbase" },
+                  value.driver === "existing-session" ||
+                  value.driver === "browserbase" ||
+                  value.cdpPort != null ||
+                  value.cdpUrl != null,
+                {
+                  message:
+                    "Profile must set cdpPort, cdpUrl, or use existing-session/browserbase driver",
+                },
               ),
           )
           .optional(),
@@ -605,6 +612,7 @@ export const OpenClawSchema = z
         wideArea: z
           .object({
             enabled: z.boolean().optional(),
+            domain: z.string().optional(),
           })
           .strict()
           .optional(),
@@ -792,6 +800,23 @@ export const OpenClawSchema = z
             securityHeaders: z
               .object({
                 strictTransportSecurity: z.union([z.string(), z.literal(false)]).optional(),
+              })
+              .strict()
+              .optional(),
+          })
+          .strict()
+          .optional(),
+        push: z
+          .object({
+            apns: z
+              .object({
+                relay: z
+                  .object({
+                    baseUrl: z.string().optional(),
+                    timeoutMs: z.number().int().positive().optional(),
+                  })
+                  .strict()
+                  .optional(),
               })
               .strict()
               .optional(),
