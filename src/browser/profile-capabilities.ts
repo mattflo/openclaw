@@ -1,18 +1,12 @@
 import type { ResolvedBrowserProfile } from "./config.js";
 
-export type BrowserProfileMode =
-  | "local-managed"
-  | "local-extension-relay"
-  | "local-existing-session"
-  | "remote-cdp";
+export type BrowserProfileMode = "local-managed" | "local-existing-session" | "remote-cdp";
 
 export type BrowserProfileCapabilities = {
   mode: BrowserProfileMode;
   isRemote: boolean;
   /** Profile uses the Chrome DevTools MCP server (existing-session driver). */
   usesChromeMcp: boolean;
-  requiresRelay: boolean;
-  requiresAttachedTab: boolean;
   usesPersistentPlaywright: boolean;
   supportsPerTabWs: boolean;
   supportsJsonTabEndpoints: boolean;
@@ -29,26 +23,9 @@ export function getBrowserProfileCapabilities(
       isRemote: true,
       usesChromeMcp: false,
       usesPersistentPlaywright: true,
-      requiresRelay: false,
-      requiresAttachedTab: false,
       supportsPerTabWs: false,
       supportsJsonTabEndpoints: false,
       supportsReset: false,
-      supportsManagedTabLimit: false,
-    };
-  }
-
-  if (profile.driver === "extension") {
-    return {
-      mode: "local-extension-relay",
-      isRemote: false,
-      usesChromeMcp: false,
-      requiresRelay: true,
-      requiresAttachedTab: true,
-      usesPersistentPlaywright: false,
-      supportsPerTabWs: false,
-      supportsJsonTabEndpoints: true,
-      supportsReset: true,
       supportsManagedTabLimit: false,
     };
   }
@@ -58,8 +35,6 @@ export function getBrowserProfileCapabilities(
       mode: "local-existing-session",
       isRemote: false,
       usesChromeMcp: true,
-      requiresRelay: false,
-      requiresAttachedTab: false,
       usesPersistentPlaywright: false,
       supportsPerTabWs: false,
       supportsJsonTabEndpoints: false,
@@ -73,8 +48,6 @@ export function getBrowserProfileCapabilities(
       mode: "remote-cdp",
       isRemote: true,
       usesChromeMcp: false,
-      requiresRelay: false,
-      requiresAttachedTab: false,
       usesPersistentPlaywright: true,
       supportsPerTabWs: false,
       supportsJsonTabEndpoints: false,
@@ -87,8 +60,6 @@ export function getBrowserProfileCapabilities(
     mode: "local-managed",
     isRemote: false,
     usesChromeMcp: false,
-    requiresRelay: false,
-    requiresAttachedTab: false,
     usesPersistentPlaywright: false,
     supportsPerTabWs: true,
     supportsJsonTabEndpoints: true,
@@ -111,9 +82,6 @@ export function resolveDefaultSnapshotFormat(params: {
   }
 
   const capabilities = getBrowserProfileCapabilities(params.profile);
-  if (capabilities.mode === "local-extension-relay") {
-    return "aria";
-  }
   if (capabilities.mode === "local-existing-session") {
     return "ai";
   }
@@ -127,16 +95,12 @@ export function shouldUsePlaywrightForScreenshot(params: {
   ref?: string;
   element?: string;
 }): boolean {
-  const capabilities = getBrowserProfileCapabilities(params.profile);
-  return (
-    capabilities.requiresRelay || !params.wsUrl || Boolean(params.ref) || Boolean(params.element)
-  );
+  return !params.wsUrl || Boolean(params.ref) || Boolean(params.element);
 }
 
 export function shouldUsePlaywrightForAriaSnapshot(params: {
   profile: ResolvedBrowserProfile;
   wsUrl?: string;
 }): boolean {
-  const capabilities = getBrowserProfileCapabilities(params.profile);
-  return capabilities.requiresRelay || !params.wsUrl;
+  return !params.wsUrl;
 }

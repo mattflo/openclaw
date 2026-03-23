@@ -208,7 +208,11 @@ export function createBrowserRouteContext(opts: ContextOptions): BrowserRouteCon
         }
       } else {
         try {
-          const reachable = await isChromeReachable(effectiveCdpUrl, 200);
+          const reachable = await isChromeReachable(
+            effectiveCdpUrl,
+            200,
+            current.resolved.ssrfPolicy,
+          );
           if (reachable) {
             running = true;
             const tabs = await profileCtx.listTabs().catch(() => []);

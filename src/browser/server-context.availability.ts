@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { createBrowserBaseSession, releaseBrowserBaseSession } from "./browserbase-api.js";
 import {
   PROFILE_ATTACH_RETRY_TIMEOUT_MS,
@@ -17,10 +18,6 @@ import {
 } from "./chrome.js";
 import type { ResolvedBrowserProfile } from "./config.js";
 import { BrowserConfigurationError, BrowserProfileUnavailableError } from "./errors.js";
-import {
-  ensureChromeExtensionRelayServer,
-  stopChromeExtensionRelayServer,
-} from "./extension-relay.js";
 import { getBrowserProfileCapabilities } from "./profile-capabilities.js";
 import {
   CDP_READY_AFTER_LAUNCH_MAX_TIMEOUT_MS,
@@ -71,11 +68,16 @@ export function createProfileAvailability({
   const isReachable = async (timeoutMs?: number) => {
     if (capabilities.usesChromeMcp) {
       // listChromeMcpTabs creates the session if needed — no separate ensureChromeMcpAvailable call required
-      await listChromeMcpTabs(profile.name);
+      await listChromeMcpTabs(profile.name, profile.userDataDir);
       return true;
     }
     const { httpTimeoutMs, wsTimeoutMs } = resolveTimeouts(timeoutMs);
-    return await isChromeCdpReady(getCdpUrl(), httpTimeoutMs, wsTimeoutMs);
+    return await isChromeCdpReady(
+      getCdpUrl(),
+      httpTimeoutMs,
+      wsTimeoutMs,
+      state().resolved.ssrfPolicy,
+    );
   };
 
   const isHttpReachable = async (timeoutMs?: number) => {
@@ -83,7 +85,7 @@ export function createProfileAvailability({
       return await isReachable(timeoutMs);
     }
     const { httpTimeoutMs } = resolveTimeouts(timeoutMs);
-    return await isChromeReachable(getCdpUrl(), httpTimeoutMs);
+    return await isChromeReachable(getCdpUrl(), httpTimeoutMs, state().resolved.ssrfPolicy);
   };
 
   const attachRunning = (running: NonNullable<ProfileRuntimeState["running"]>) => {
@@ -126,9 +128,6 @@ export function createProfileAvailability({
       await stopOpenClawChrome(profileState.running).catch(() => {});
       setProfileRunning(null);
     }
-    if (previousProfile.driver === "extension") {
-      await stopChromeExtensionRelayServer({ cdpUrl: previousProfile.cdpUrl }).catch(() => false);
-    }
     if (getBrowserProfileCapabilities(previousProfile).usesChromeMcp) {
       await closeChromeMcpSession(previousProfile.name).catch(() => false);
     }
@@ -162,7 +161,12 @@ export function createProfileAvailability({
   const ensureBrowserAvailable = async (): Promise<void> => {
     await reconcileProfileRuntime();
     if (capabilities.usesChromeMcp) {
-      await ensureChromeMcpAvailable(profile.name);
+      if (profile.userDataDir && !fs.existsSync(profile.userDataDir)) {
+        throw new BrowserProfileUnavailableError(
+          `Browser user data directory not found for profile "${profile.name}": ${profile.userDataDir}`,
+        );
+      }
+      await ensureChromeMcpAvailable(profile.name, profile.userDataDir);
       return;
     }
     const current = state();
@@ -200,29 +204,7 @@ export function createProfileAvailability({
 
     const remoteCdp = capabilities.isRemote;
     const attachOnly = profile.attachOnly;
-    const isExtension = capabilities.requiresRelay;
     const httpReachable = await isHttpReachable();
-
-    if (isExtension && remoteCdp) {
-      throw new BrowserConfigurationError(
-        `Profile "${profile.name}" uses driver=extension but cdpUrl is not loopback (${getCdpUrl()}).`,
-      );
-    }
-
-    if (isExtension) {
-      if (!httpReachable) {
-        await ensureChromeExtensionRelayServer({
-          cdpUrl: getCdpUrl(),
-          bindHost: current.resolved.relayBindHost,
-        });
-        if (!(await isHttpReachable(PROFILE_ATTACH_RETRY_TIMEOUT_MS))) {
-          throw new BrowserProfileUnavailableError(
-            `Chrome extension relay for profile "${profile.name}" is not reachable at ${getCdpUrl()}.`,
-          );
-        }
-      }
-      return;
-    }
 
     if (!httpReachable) {
       if ((attachOnly || remoteCdp) && opts.onEnsureAttachTarget) {
@@ -295,12 +277,6 @@ export function createProfileAvailability({
     await reconcileProfileRuntime();
     if (capabilities.usesChromeMcp) {
       const stopped = await closeChromeMcpSession(profile.name);
-      return { stopped };
-    }
-    if (capabilities.requiresRelay) {
-      const stopped = await stopChromeExtensionRelayServer({
-        cdpUrl: getCdpUrl(),
-      });
       return { stopped };
     }
     const profileState = getProfileState();
