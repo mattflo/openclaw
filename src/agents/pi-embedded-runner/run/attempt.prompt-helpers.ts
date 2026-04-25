@@ -14,6 +14,7 @@ import { resolveHeartbeatPromptForSystemPrompt } from "../../heartbeat-system-pr
 import { buildActiveMusicGenerationTaskPromptContextForSession } from "../../music-generation-task-status.js";
 import { prependSystemPromptAdditionAfterCacheBoundary } from "../../system-prompt-cache-boundary.js";
 import { resolveEffectiveToolFsWorkspaceOnly } from "../../tool-fs-policy.js";
+import { derivePromptTokens, type NormalizedUsage } from "../../usage.js";
 import { buildActiveVideoGenerationTaskPromptContextForSession } from "../../video-generation-task-status.js";
 import { buildEmbeddedCompactionRuntimeContext } from "../compaction-runtime-context.js";
 import { log } from "../logger.js";
@@ -266,4 +267,15 @@ export function buildAfterTurnRuntimeContext(params: {
       : {}),
     ...(params.promptCache ? { promptCache: params.promptCache } : {}),
   };
+}
+
+export function buildAfterTurnRuntimeContextFromUsage(
+  params: Omit<Parameters<typeof buildAfterTurnRuntimeContext>[0], "currentTokenCount"> & {
+    lastCallUsage?: NormalizedUsage;
+  },
+): ContextEngineRuntimeContext {
+  return buildAfterTurnRuntimeContext({
+    ...params,
+    currentTokenCount: derivePromptTokens(params.lastCallUsage),
+  });
 }
