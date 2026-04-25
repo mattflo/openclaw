@@ -1,4 +1,5 @@
 import { normalizeOptionalString } from "openclaw/plugin-sdk/text-runtime";
+import type { SsrFPolicy } from "../infra/net/ssrf.js";
 import { fetchOk, normalizeCdpHttpBaseForJsonEndpoints } from "./cdp.helpers.js";
 import { appendCdpPath } from "./cdp.js";
 import { closeChromeMcpTab, focusChromeMcpTab } from "./chrome-mcp.js";
@@ -13,6 +14,7 @@ import { resolveTargetIdFromTabs } from "./target-id.js";
 type SelectionDeps = {
   profile: ResolvedBrowserProfile;
   getProfileState: () => ProfileRuntimeState;
+  getCdpControlPolicy: () => SsrFPolicy | undefined;
   ensureBrowserAvailable: () => Promise<void>;
   listTabs: () => Promise<BrowserTab[]>;
   openTab: (url: string) => Promise<BrowserTab>;
@@ -28,6 +30,7 @@ type SelectionOps = {
 export function createProfileSelectionOps({
   profile,
   getProfileState,
+  getCdpControlPolicy,
   ensureBrowserAvailable,
   listTabs,
   openTab,
@@ -111,6 +114,7 @@ export function createProfileSelectionOps({
         await focusPageByTargetIdViaPlaywright({
           cdpUrl: getCdpUrl(),
           targetId: resolvedTargetId,
+          ssrfPolicy: getCdpControlPolicy(),
         });
         const profileState = getProfileState();
         profileState.lastTargetId = resolvedTargetId;
@@ -118,7 +122,12 @@ export function createProfileSelectionOps({
       }
     }
 
-    await fetchOk(appendCdpPath(cdpHttpBase, `/json/activate/${resolvedTargetId}`));
+    await fetchOk(
+      appendCdpPath(cdpHttpBase, `/json/activate/${resolvedTargetId}`),
+      undefined,
+      undefined,
+      getCdpControlPolicy(),
+    );
     const profileState = getProfileState();
     profileState.lastTargetId = resolvedTargetId;
   };
@@ -140,12 +149,18 @@ export function createProfileSelectionOps({
         await closePageByTargetIdViaPlaywright({
           cdpUrl: getCdpUrl(),
           targetId: resolvedTargetId,
+          ssrfPolicy: getCdpControlPolicy(),
         });
         return;
       }
     }
 
-    await fetchOk(appendCdpPath(cdpHttpBase, `/json/close/${resolvedTargetId}`));
+    await fetchOk(
+      appendCdpPath(cdpHttpBase, `/json/close/${resolvedTargetId}`),
+      undefined,
+      undefined,
+      getCdpControlPolicy(),
+    );
   };
 
   return {
