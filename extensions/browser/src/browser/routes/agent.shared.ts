@@ -122,7 +122,7 @@ export async function withRouteTabContext<T>(
     return await params.run({
       profileCtx,
       tab,
-      cdpUrl: profileCtx.profile.cdpUrl,
+      cdpUrl: profileCtx.getCdpUrl(),
       resolveTabUrl: (fallbackUrl?: string) =>
         resolveSafeRouteTabUrl({
           ctx: params.ctx,

@@ -17,6 +17,19 @@ export type BrowserProfileCapabilities = {
 export function getBrowserProfileCapabilities(
   profile: ResolvedBrowserProfile,
 ): BrowserProfileCapabilities {
+  if (profile.driver === "browserbase") {
+    return {
+      mode: "remote-cdp",
+      isRemote: true,
+      usesChromeMcp: false,
+      usesPersistentPlaywright: true,
+      supportsPerTabWs: false,
+      supportsJsonTabEndpoints: false,
+      supportsReset: false,
+      supportsManagedTabLimit: false,
+    };
+  }
+
   if (profile.driver === "existing-session") {
     return {
       mode: "local-existing-session",

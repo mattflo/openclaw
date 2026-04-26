@@ -7,6 +7,7 @@ import { BrowserError, toBrowserErrorResponse } from "../errors.js";
 import { getBrowserProfileCapabilities } from "../profile-capabilities.js";
 import { createBrowserProfilesService } from "../profiles-service.js";
 import type { BrowserRouteContext, ProfileContext } from "../server-context.js";
+import { isBrowserBaseRunning } from "../server-context.types.js";
 import { resolveProfileContext } from "./agent.shared.js";
 import type { BrowserRequest, BrowserResponse, BrowserRouteRegistrar } from "./types.js";
 import {
@@ -113,14 +114,22 @@ async function buildBrowserStatus(req: BrowserRequest, ctx: BrowserRouteContext)
     cdpHttp,
     pid: capabilities.usesChromeMcp
       ? getChromeMcpPid(profileCtx.profile.name)
-      : (profileState?.running?.pid ?? null),
+      : profileState?.running && !isBrowserBaseRunning(profileState.running)
+        ? profileState.running.pid
+        : null,
     cdpPort: capabilities.usesChromeMcp ? null : profileCtx.profile.cdpPort,
-    cdpUrl: capabilities.usesChromeMcp ? null : profileCtx.profile.cdpUrl,
-    chosenBrowser: profileState?.running?.exe.kind ?? null,
+    cdpUrl: capabilities.usesChromeMcp ? null : profileCtx.getCdpUrl(),
+    chosenBrowser:
+      profileState?.running && !isBrowserBaseRunning(profileState.running)
+        ? profileState.running.exe.kind
+        : null,
     detectedBrowser,
     detectedExecutablePath,
     detectError,
-    userDataDir: profileState?.running?.userDataDir ?? profileCtx.profile.userDataDir ?? null,
+    userDataDir:
+      profileState?.running && !isBrowserBaseRunning(profileState.running)
+        ? (profileState.running.userDataDir ?? profileCtx.profile.userDataDir ?? null)
+        : (profileCtx.profile.userDataDir ?? null),
     color: profileCtx.profile.color,
     headless: headlessMode.headless,
     headlessSource: headlessMode.source,

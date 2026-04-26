@@ -26,6 +26,7 @@ import type {
   ProfileRuntimeState,
   ProfileStatus,
 } from "./server-context.types.js";
+import { isBrowserBaseRunning } from "./server-context.types.js";
 
 export type {
   BrowserRouteContext,
@@ -69,6 +70,18 @@ function createProfileContext(
     return profileState;
   };
 
+  const getCdpUrl = (): string => {
+    const ps = getProfileState();
+    if (
+      profile.driver === "browserbase" &&
+      ps.running != null &&
+      isBrowserBaseRunning(ps.running)
+    ) {
+      return ps.running.cdpUrl;
+    }
+    return profile.cdpUrl;
+  };
+
   const setProfileRunning = (running: ProfileRuntimeState["running"]) => {
     const profileState = getProfileState();
     profileState.running = running;
@@ -78,6 +91,7 @@ function createProfileContext(
     profile,
     state,
     getProfileState,
+    getCdpUrl,
   });
 
   const {
@@ -92,6 +106,7 @@ function createProfileContext(
     state,
     getProfileState,
     setProfileRunning,
+    getCdpUrl,
   });
 
   const { ensureTabAvailable, focusTab, closeTab } = createProfileSelectionOps({
@@ -101,6 +116,7 @@ function createProfileContext(
     ensureBrowserAvailable,
     listTabs,
     openTab,
+    getCdpUrl,
   });
 
   const { resetProfile } = createProfileResetOps({
@@ -113,6 +129,7 @@ function createProfileContext(
 
   return {
     profile,
+    getCdpUrl,
     ensureBrowserAvailable,
     ensureTabAvailable,
     isHttpReachable,
@@ -174,6 +191,11 @@ export function createBrowserRouteContext(opts: ContextOptions): BrowserRouteCon
       }
       const capabilities = getBrowserProfileCapabilities(profile);
 
+      const effectiveCdpUrl =
+        profileState?.running != null && isBrowserBaseRunning(profileState.running)
+          ? profileState.running.cdpUrl
+          : profile.cdpUrl;
+
       let tabCount = 0;
       let running = false;
       const profileCtx = createProfileContext(opts, profile);
@@ -199,7 +221,6 @@ export function createBrowserRouteContext(opts: ContextOptions): BrowserRouteCon
           // Browser might not be responsive
         }
       } else {
-        // Check if something is listening on the port
         try {
           const probeTimeoutMs = usesFastLoopbackCdpProbeClass({
             profileIsLoopback: profile.cdpIsLoopback,
@@ -208,7 +229,7 @@ export function createBrowserRouteContext(opts: ContextOptions): BrowserRouteCon
             ? 200
             : current.resolved.remoteCdpTimeoutMs;
           const reachable = await isChromeReachable(
-            profile.cdpUrl,
+            effectiveCdpUrl,
             probeTimeoutMs,
             resolveCdpReachabilityPolicy(profile, current.resolved.ssrfPolicy),
           );
@@ -226,7 +247,7 @@ export function createBrowserRouteContext(opts: ContextOptions): BrowserRouteCon
         name,
         transport: capabilities.usesChromeMcp ? "chrome-mcp" : "cdp",
         cdpPort: capabilities.usesChromeMcp ? null : profile.cdpPort,
-        cdpUrl: capabilities.usesChromeMcp ? null : profile.cdpUrl,
+        cdpUrl: capabilities.usesChromeMcp ? null : effectiveCdpUrl,
         color: profile.color,
         driver: profile.driver,
         running,

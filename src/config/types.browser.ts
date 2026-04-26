@@ -10,7 +10,7 @@ export type BrowserProfileConfig = {
   /** Extra Chrome MCP arguments for existing-session profiles. */
   mcpArgs?: string[];
   /** Profile driver (default: openclaw). */
-  driver?: "openclaw" | "clawd" | "existing-session";
+  driver?: "openclaw" | "clawd" | "existing-session" | "browserbase";
   /** If true, launch this profile in headless mode. Falls back to browser.headless. */
   headless?: boolean;
   /** Browser executable path for this profile. Falls back to browser.executablePath. */
@@ -19,6 +19,10 @@ export type BrowserProfileConfig = {
   attachOnly?: boolean;
   /** Profile color (hex). Auto-assigned at creation. */
   color: string;
+  /** BrowserBase API key (for driver=browserbase). Use ${BROWSERBASE_API_KEY} for env substitution. */
+  apiKey?: string;
+  /** BrowserBase project ID (for driver=browserbase). Use ${BROWSERBASE_PROJECT_ID} for env substitution. */
+  projectId?: string;
 };
 export type BrowserSnapshotDefaults = {
   /** Default snapshot mode (applies when mode is not provided). */

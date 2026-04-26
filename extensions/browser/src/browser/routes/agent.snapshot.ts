@@ -628,7 +628,7 @@ export function registerBrowserAgentSnapshotRoutes(
         }
         if (plan.format === "ai") {
           const roleSnapshotArgs = {
-            cdpUrl: profileCtx.profile.cdpUrl,
+            cdpUrl: profileCtx.getCdpUrl(),
             targetId: tab.targetId,
             selector: plan.selectorValue,
             frameSelector: plan.frameSelectorValue,
@@ -673,7 +673,7 @@ export function registerBrowserAgentSnapshotRoutes(
               : await cdpRoleSnapshot()
             : pw
               ? await pw.snapshotAiViaPlaywright({
-                  cdpUrl: profileCtx.profile.cdpUrl,
+                  cdpUrl: profileCtx.getCdpUrl(),
                   targetId: tab.targetId,
                   ssrfPolicy: ctx.state().resolved.ssrfPolicy,
                   urls: plan.urls,
@@ -691,7 +691,7 @@ export function registerBrowserAgentSnapshotRoutes(
               return jsonError(res, 501, "Snapshot labels require Playwright.");
             }
             const labeled = await pw.screenshotWithLabelsViaPlaywright({
-              cdpUrl: profileCtx.profile.cdpUrl,
+              cdpUrl: profileCtx.getCdpUrl(),
               targetId: tab.targetId,
               refs: "refs" in snap ? snap.refs : {},
               type: "png",
@@ -744,7 +744,7 @@ export function registerBrowserAgentSnapshotRoutes(
                   return null;
                 }
                 return await pw.snapshotAriaViaPlaywright({
-                  cdpUrl: profileCtx.profile.cdpUrl,
+                  cdpUrl: profileCtx.getCdpUrl(),
                   targetId: tab.targetId,
                   limit: plan.limit,
                   ssrfPolicy: ctx.state().resolved.ssrfPolicy,
@@ -759,7 +759,7 @@ export function registerBrowserAgentSnapshotRoutes(
         }
         if (!usePlaywrightAriaSnapshot) {
           await pwModule?.storeAriaSnapshotRefsViaPlaywright?.({
-            cdpUrl: profileCtx.profile.cdpUrl,
+            cdpUrl: profileCtx.getCdpUrl(),
             targetId: tab.targetId,
             nodes: resolved.nodes,
           });

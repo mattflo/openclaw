@@ -38,6 +38,7 @@ type TabOpsDeps = {
   profile: ResolvedBrowserProfile;
   state: () => BrowserServerState;
   getProfileState: () => ProfileRuntimeState;
+  getCdpUrl: () => string;
 };
 
 type ProfileTabOps = {
@@ -173,6 +174,7 @@ export function createProfileTabOps({
   profile,
   state,
   getProfileState,
+  getCdpUrl,
 }: TabOpsDeps): ProfileTabOps {
   const cdpHttpBase = normalizeCdpHttpBaseForJsonEndpoints(profile.cdpUrl);
   const capabilities = getBrowserProfileCapabilities(profile);
@@ -206,8 +208,9 @@ export function createProfileTabOps({
       const listPagesViaPlaywright = (mod as Partial<PwAiModule> | null)?.listPagesViaPlaywright;
       if (typeof listPagesViaPlaywright === "function") {
         const ssrfPolicy = getCdpControlPolicy();
-        await assertCdpEndpointAllowed(profile.cdpUrl, ssrfPolicy);
-        const pages = await listPagesViaPlaywright({ cdpUrl: profile.cdpUrl, ssrfPolicy });
+        const cdpUrl = getCdpUrl();
+        await assertCdpEndpointAllowed(cdpUrl, ssrfPolicy);
+        const pages = await listPagesViaPlaywright({ cdpUrl, ssrfPolicy });
         return pages.map((p) => ({
           targetId: p.targetId,
           title: p.title,
@@ -231,7 +234,7 @@ export function createProfileTabOps({
         targetId: t.id ?? "",
         title: t.title ?? "",
         url: t.url ?? "",
-        wsUrl: normalizeWsUrl(t.webSocketDebuggerUrl, profile.cdpUrl),
+        wsUrl: normalizeWsUrl(t.webSocketDebuggerUrl, getCdpUrl()),
         type: t.type,
       }))
       .filter((t) => Boolean(t.targetId));
@@ -297,7 +300,7 @@ export function createProfileTabOps({
       const createPageViaPlaywright = (mod as Partial<PwAiModule> | null)?.createPageViaPlaywright;
       if (typeof createPageViaPlaywright === "function") {
         const page = await createPageViaPlaywright({
-          cdpUrl: profile.cdpUrl,
+          cdpUrl: getCdpUrl(),
           url,
           ...ssrfPolicyOpts,
         });
@@ -326,7 +329,7 @@ export function createProfileTabOps({
     await assertBrowserNavigationAllowed({ url, ...ssrfPolicyOpts });
     const cdpActionTimeouts = getRemoteCdpActionTimeouts();
     const createTargetOpts: Parameters<typeof createTargetViaCdp>[0] = {
-      cdpUrl: profile.cdpUrl,
+      cdpUrl: getCdpUrl(),
       url,
       ssrfPolicy: getCdpControlPolicy(),
     };
@@ -401,7 +404,7 @@ export function createProfileTabOps({
         targetId: created.id,
         title: created.title ?? "",
         url: resolvedUrl,
-        wsUrl: normalizeWsUrl(created.webSocketDebuggerUrl, profile.cdpUrl),
+        wsUrl: normalizeWsUrl(created.webSocketDebuggerUrl, getCdpUrl()),
         type: created.type,
       },
     });

@@ -5,12 +5,25 @@ import type { ResolvedBrowserConfig, ResolvedBrowserProfile } from "./config.js"
 
 export type { BrowserTab };
 
+export type BrowserBaseRunning = {
+  type: "browserbase";
+  sessionId: string;
+  cdpUrl: string;
+  createdAt: number;
+};
+
+export function isBrowserBaseRunning(
+  r: RunningChrome | BrowserBaseRunning | null,
+): r is BrowserBaseRunning {
+  return r != null && typeof r === "object" && (r as BrowserBaseRunning).type === "browserbase";
+}
+
 /**
  * Runtime state for a single profile's Chrome instance.
  */
 export type ProfileRuntimeState = {
   profile: ResolvedBrowserProfile;
-  running: RunningChrome | null;
+  running: RunningChrome | BrowserBaseRunning | null;
   /** Sticky tab selection when callers omit targetId (keeps snapshot+act consistent). */
   lastTargetId?: string | null;
   /** Stable, user-facing tab aliases scoped to this profile runtime. */
@@ -57,6 +70,7 @@ export type BrowserRouteContext = {
 
 export type ProfileContext = {
   profile: ResolvedBrowserProfile;
+  getCdpUrl: () => string;
 } & BrowserProfileActions;
 
 export type ProfileStatus = {

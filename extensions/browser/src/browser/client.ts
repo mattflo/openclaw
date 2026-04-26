@@ -76,7 +76,7 @@ export async function browserStatus(
     timeoutMs:
       typeof opts?.timeoutMs === "number" && Number.isFinite(opts.timeoutMs)
         ? Math.max(1, Math.floor(opts.timeoutMs))
-        : 1500,
+        : 10000,
   });
 }
 
@@ -107,7 +107,7 @@ export async function browserProfiles(
       timeoutMs:
         typeof opts?.timeoutMs === "number" && Number.isFinite(opts.timeoutMs)
           ? Math.max(1, Math.floor(opts.timeoutMs))
-          : 3000,
+          : 15000,
     },
   );
   return res.profiles ?? [];
@@ -223,7 +223,7 @@ export async function browserTabs(
       timeoutMs:
         typeof opts?.timeoutMs === "number" && Number.isFinite(opts.timeoutMs)
           ? Math.max(1, Math.floor(opts.timeoutMs))
-          : 3000,
+          : 15000,
     },
   );
   return res.tabs ?? [];

@@ -106,7 +106,9 @@ export type ResolvedBrowserProfile = {
   mcpCommand?: string;
   mcpArgs?: string[];
   color: string;
-  driver: "openclaw" | "existing-session";
+  driver: "openclaw" | "existing-session" | "browserbase";
+  browserbaseApiKey?: string;
+  browserbaseProjectId?: string;
   executablePath?: string;
   headless: boolean;
   headlessSource?: "profile" | "config" | "default";
@@ -464,11 +466,39 @@ export function resolveProfile(
     return null;
   }
 
+  const driver =
+    profile.driver === "existing-session"
+      ? "existing-session"
+      : profile.driver === "browserbase"
+        ? "browserbase"
+        : "openclaw";
+
+  if (driver === "browserbase") {
+    const apiKey = profile.apiKey?.trim() ?? "";
+    const projectId = profile.projectId?.trim() ?? "";
+    if (!apiKey || !projectId) {
+      throw new Error(
+        `Profile "${profileName}" (driver=browserbase) must set apiKey and projectId.`,
+      );
+    }
+    return {
+      name: profileName,
+      cdpPort: 0,
+      cdpUrl: "http://browserbase.invalid",
+      cdpHost: "browserbase.invalid",
+      cdpIsLoopback: false,
+      color: profile.color,
+      driver: "browserbase",
+      browserbaseApiKey: apiKey,
+      browserbaseProjectId: projectId,
+      attachOnly: false,
+    };
+  }
+
   const rawProfileUrl = profile.cdpUrl?.trim() ?? "";
   let cdpHost = resolved.cdpHost;
   let cdpPort = profile.cdpPort ?? 0;
   let cdpUrl = "";
-  const driver = profile.driver === "existing-session" ? "existing-session" : "openclaw";
   const headless = profile.headless ?? resolved.headless;
   const headlessSource =
     typeof profile.headless === "boolean" ? "profile" : resolved.headlessSource;

@@ -5,6 +5,7 @@ import {
   createBrowserRouteContext,
   listKnownProfileNames,
 } from "./server-context.js";
+import { isBrowserBaseRunning } from "./server-context.types.js";
 
 export async function ensureExtensionRelayForProfiles(_params: {
   resolved: ResolvedBrowserConfig;
@@ -32,7 +33,9 @@ export async function stopKnownBrowserProfiles(params: {
       try {
         const runtime = current.profiles.get(name);
         if (runtime?.running) {
-          await stopOpenClawChrome(runtime.running);
+          if (!isBrowserBaseRunning(runtime.running)) {
+            await stopOpenClawChrome(runtime.running);
+          }
           runtime.running = null;
           continue;
         }

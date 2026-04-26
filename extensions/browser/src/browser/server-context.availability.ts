@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createBrowserBaseSession, releaseBrowserBaseSession } from "./browserbase-api.js";
 import { resolveCdpReachabilityPolicy } from "./cdp-reachability-policy.js";
 import {
   CHROME_MCP_ATTACH_READY_POLL_MS,
@@ -18,7 +19,7 @@ import {
   stopOpenClawChrome,
 } from "./chrome.js";
 import type { ResolvedBrowserProfile } from "./config.js";
-import { BrowserProfileUnavailableError } from "./errors.js";
+import { BrowserConfigurationError, BrowserProfileUnavailableError } from "./errors.js";
 import { getBrowserProfileCapabilities } from "./profile-capabilities.js";
 import {
   CDP_READY_AFTER_LAUNCH_MAX_TIMEOUT_MS,
@@ -35,6 +36,7 @@ import type {
   ContextOptions,
   ProfileRuntimeState,
 } from "./server-context.types.js";
+import { isBrowserBaseRunning } from "./server-context.types.js";
 
 type AvailabilityDeps = {
   opts: ContextOptions;
@@ -42,6 +44,7 @@ type AvailabilityDeps = {
   state: () => BrowserServerState;
   getProfileState: () => ProfileRuntimeState;
   setProfileRunning: (running: ProfileRuntimeState["running"]) => void;
+  getCdpUrl: () => string;
 };
 
 type AvailabilityOps = {
@@ -87,8 +90,8 @@ export function createProfileAvailability({
   state,
   getProfileState,
   setProfileRunning,
+  getCdpUrl,
 }: AvailabilityDeps): AvailabilityOps {
-  const redactedProfileCdpUrl = redactCdpUrl(profile.cdpUrl) ?? profile.cdpUrl;
   const capabilities = getBrowserProfileCapabilities(profile);
   const resolveTimeouts = (timeoutMs: number | undefined) =>
     resolveCdpReachabilityTimeouts({
@@ -110,7 +113,7 @@ export function createProfileAvailability({
     }
     const { httpTimeoutMs, wsTimeoutMs } = resolveTimeouts(timeoutMs);
     return await isChromeCdpReady(
-      profile.cdpUrl,
+      getCdpUrl(),
       httpTimeoutMs,
       wsTimeoutMs,
       getCdpReachabilityPolicy(),
@@ -134,7 +137,7 @@ export function createProfileAvailability({
       return await isTransportAvailable(timeoutMs);
     }
     const { httpTimeoutMs } = resolveTimeouts(timeoutMs);
-    return await isChromeReachable(profile.cdpUrl, httpTimeoutMs, getCdpReachabilityPolicy());
+    return await isChromeReachable(getCdpUrl(), httpTimeoutMs, getCdpReachabilityPolicy());
   };
 
   const describeCdpFailure = async (timeoutMs?: number): Promise<string> => {
@@ -150,13 +153,16 @@ export function createProfileAvailability({
 
   const attachRunning = (running: NonNullable<ProfileRuntimeState["running"]>) => {
     setProfileRunning(running);
+    if (isBrowserBaseRunning(running)) {
+      return;
+    }
     running.proc.on("exit", () => {
-      // Guard against server teardown (e.g., SIGUSR1 restart)
       if (!opts.getState()) {
         return;
       }
       const profileState = getProfileState();
-      if (profileState.running?.pid === running.pid) {
+      const r = profileState.running;
+      if (r != null && !isBrowserBaseRunning(r) && r.pid === running.pid) {
         setProfileRunning(null);
       }
     });
@@ -189,7 +195,7 @@ export function createProfileAvailability({
     profileState.lastTargetId = null;
 
     const previousProfile = reconcile.previousProfile;
-    if (profileState.running) {
+    if (profileState.running && !isBrowserBaseRunning(profileState.running)) {
       await stopOpenClawChrome(profileState.running).catch(() => {});
       setProfileRunning(null);
     }
@@ -259,9 +265,40 @@ export function createProfileAvailability({
       return;
     }
     const current = state();
+    const profileState = getProfileState();
+
+    if (profile.driver === "browserbase") {
+      const apiKey = profile.browserbaseApiKey?.trim();
+      const projectId = profile.browserbaseProjectId?.trim();
+      if (!apiKey || !projectId) {
+        throw new BrowserConfigurationError(
+          `Profile "${profile.name}" (browserbase) is missing apiKey or projectId in config.`,
+        );
+      }
+      const BB_SESSION_TTL_MS = 4 * 60 * 1000;
+      if (profileState.running != null && isBrowserBaseRunning(profileState.running)) {
+        if (Date.now() - profileState.running.createdAt < BB_SESSION_TTL_MS) {
+          return;
+        }
+        await releaseBrowserBaseSession({
+          apiKey,
+          projectId,
+          sessionId: profileState.running.sessionId,
+        }).catch(() => {});
+        setProfileRunning(null);
+      }
+      const session = await createBrowserBaseSession({ apiKey, projectId });
+      attachRunning({
+        type: "browserbase" as const,
+        sessionId: session.id,
+        cdpUrl: session.connectUrl,
+        createdAt: Date.now(),
+      });
+      return;
+    }
+
     const remoteCdp = capabilities.isRemote;
     const attachOnly = profile.attachOnly;
-    const profileState = getProfileState();
     const httpReachable = await isHttpReachable();
     const launchOptions = launchOptionsForEnsure(options);
 
@@ -286,7 +323,7 @@ export function createProfileAvailability({
       if (attachOnly || remoteCdp) {
         throw new BrowserProfileUnavailableError(
           remoteCdp
-            ? `Remote CDP for profile "${profile.name}" is not reachable at ${redactedProfileCdpUrl}.`
+            ? `Remote CDP for profile "${profile.name}" is not reachable at ${redactCdpUrl(getCdpUrl()) ?? getCdpUrl()}.`
             : `Browser attachOnly is enabled and profile "${profile.name}" is not running.`,
         );
       }
@@ -302,13 +339,10 @@ export function createProfileAvailability({
       return;
     }
 
-    // Port is reachable - check if we own it.
     if (await isReachable()) {
       return;
     }
 
-    // HTTP responds but WebSocket fails. For attachOnly/remote profiles, never perform
-    // local ownership/restart handling; just run attach retries and surface attach errors.
     if (attachOnly || remoteCdp) {
       if (opts.onEnsureAttachTarget) {
         await opts.onEnsureAttachTarget(profile);
@@ -327,7 +361,6 @@ export function createProfileAvailability({
       );
     }
 
-    // HTTP responds but WebSocket fails - port in use by something else.
     if (!profileState.running) {
       const detail = await describeCdpFailure(PROFILE_ATTACH_RETRY_TIMEOUT_MS);
       throw new BrowserProfileUnavailableError(
@@ -336,7 +369,10 @@ export function createProfileAvailability({
       );
     }
 
-    await stopOpenClawChrome(profileState.running);
+    const r = profileState.running;
+    if (r != null && !isBrowserBaseRunning(r)) {
+      await stopOpenClawChrome(r);
+    }
     setProfileRunning(null);
 
     const relaunched = await launchOpenClawChrome(current.resolved, profile, launchOptions);
@@ -380,6 +416,23 @@ export function createProfileAvailability({
       return { stopped };
     }
     const profileState = getProfileState();
+    if (
+      profile.driver === "browserbase" &&
+      profileState.running != null &&
+      isBrowserBaseRunning(profileState.running)
+    ) {
+      const apiKey = profile.browserbaseApiKey?.trim();
+      const projectId = profile.browserbaseProjectId?.trim();
+      if (apiKey && projectId) {
+        await releaseBrowserBaseSession({
+          apiKey,
+          projectId,
+          sessionId: profileState.running.sessionId,
+        }).catch(() => {});
+      }
+      setProfileRunning(null);
+      return { stopped: true };
+    }
     if (!profileState.running) {
       const idleStop = resolveIdleProfileStopOutcome(profile);
       if (idleStop.closePlaywright) {
@@ -389,7 +442,11 @@ export function createProfileAvailability({
       }
       return { stopped: idleStop.stopped };
     }
-    await stopOpenClawChrome(profileState.running);
+    const r = profileState.running;
+    if (isBrowserBaseRunning(r)) {
+      return { stopped: false };
+    }
+    await stopOpenClawChrome(r);
     setProfileRunning(null);
     return { stopped: true };
   };

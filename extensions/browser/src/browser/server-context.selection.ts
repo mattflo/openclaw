@@ -18,6 +18,7 @@ type SelectionDeps = {
   ensureBrowserAvailable: (opts?: { headless?: boolean }) => Promise<void>;
   listTabs: () => Promise<BrowserTab[]>;
   openTab: (url: string) => Promise<BrowserTab>;
+  getCdpUrl: () => string;
 };
 
 type SelectionOps = {
@@ -33,6 +34,7 @@ export function createProfileSelectionOps({
   ensureBrowserAvailable,
   listTabs,
   openTab,
+  getCdpUrl,
 }: SelectionDeps): SelectionOps {
   const cdpHttpBase = normalizeCdpHttpBaseForJsonEndpoints(profile.cdpUrl);
   const capabilities = getBrowserProfileCapabilities(profile);
@@ -111,7 +113,7 @@ export function createProfileSelectionOps({
         ?.focusPageByTargetIdViaPlaywright;
       if (typeof focusPageByTargetIdViaPlaywright === "function") {
         await focusPageByTargetIdViaPlaywright({
-          cdpUrl: profile.cdpUrl,
+          cdpUrl: getCdpUrl(),
           targetId: resolvedTargetId,
           ssrfPolicy: getCdpControlPolicy(),
         });
@@ -147,7 +149,7 @@ export function createProfileSelectionOps({
         ?.closePageByTargetIdViaPlaywright;
       if (typeof closePageByTargetIdViaPlaywright === "function") {
         await closePageByTargetIdViaPlaywright({
-          cdpUrl: profile.cdpUrl,
+          cdpUrl: getCdpUrl(),
           targetId: resolvedTargetId,
           ssrfPolicy: getCdpControlPolicy(),
         });
