@@ -120,6 +120,14 @@ Starts a sub-agent run with `deliver: false` on the global `subagent` lane,
 then runs an announce step and posts the announce reply to the requester
 chat channel.
 
+Availability depends on the caller's effective tool policy. The `coding` and
+`full` profiles expose `sessions_spawn` by default. The `messaging` profile
+does not; add `tools.alsoAllow: ["sessions_spawn", "sessions_yield",
+"subagents"]` or use `tools.profile: "coding"` for agents that should delegate
+work. Channel/group, provider, sandbox, and per-agent allow/deny policies can
+still remove the tool after the profile stage. Use `/tools` from the same
+session to confirm the effective tool list.
+
 **Defaults:**
 
 - **Model:** inherits the caller unless you set `agents.defaults.subagents.model` (or per-agent `agents.list[].subagents.model`); an explicit `sessions_spawn.model` still wins.
@@ -139,6 +147,12 @@ chat channel.
 </ParamField>
 <ParamField path="runtime" type='"subagent" | "acp"' default="subagent">
   `acp` is only for external ACP harnesses (`claude`, `droid`, `gemini`, `opencode`, or explicitly requested Codex ACP/acpx) and for `agents.list[]` entries whose `runtime.type` is `acp`.
+</ParamField>
+<ParamField path="resumeSessionId" type="string">
+  ACP-only. Resumes an existing ACP harness session when `runtime: "acp"`; ignored for native sub-agent spawns.
+</ParamField>
+<ParamField path="streamTo" type='"parent"'>
+  ACP-only. Streams ACP run output to the parent session when `runtime: "acp"`; omit for native sub-agent spawns.
 </ParamField>
 <ParamField path="model" type="string">
   Override the sub-agent model. Invalid values are skipped and the sub-agent runs on the default model with a warning in the tool result.

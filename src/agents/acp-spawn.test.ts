@@ -126,7 +126,7 @@ vi.mock("../config/sessions.js", () => ({
 }));
 
 vi.mock("../config/config.js", () => ({
-  loadConfig: () => hoisted.state.cfg,
+  getRuntimeConfig: () => hoisted.state.cfg,
 }));
 
 vi.mock("../config/sessions/transcript.js", () => ({
@@ -710,6 +710,7 @@ describe("spawnAcpDirect", () => {
     expect(agentCall?.params?.threadId).toBe("child-thread");
     expect(agentCall?.params?.deliver).toBe(true);
     expect(agentCall?.params?.lane).toBe("subagent");
+    expect(agentCall?.params?.acpTurnSource).toBe("manual_spawn");
     expect(hoisted.initializeSessionMock).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionKey: expect.stringMatching(/^agent:codex:acp:/),

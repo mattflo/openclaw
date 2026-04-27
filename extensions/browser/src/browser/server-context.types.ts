@@ -24,6 +24,13 @@ export function isBrowserBaseRunning(
 export type ProfileRuntimeState = {
   profile: ResolvedBrowserProfile;
   running: RunningChrome | BrowserBaseRunning | null;
+  ensureBrowserAvailable?: { key: string; promise: Promise<void> } | null;
+  managedLaunchFailure?: {
+    consecutiveFailures: number;
+    lastFailureAt: number;
+    cooldownUntil?: number;
+    lastError: string;
+  };
   /** Sticky tab selection when callers omit targetId (keeps snapshot+act consistent). */
   lastTargetId?: string | null;
   /** Stable, user-facing tab aliases scoped to this profile runtime. */
