@@ -79,7 +79,11 @@ const QMD_EMBED_QUEUE_KEY = Symbol.for("openclaw.qmdEmbedQueueTail");
 const QMD_UPDATE_QUEUE_KEY = Symbol.for("openclaw.qmdUpdateQueueState");
 const IGNORED_MEMORY_WATCH_DIR_NAMES = new Set([
   ".git",
+  ".cache",
   "node_modules",
+  "vendor",
+  "dist",
+  "build",
   ".pnpm-store",
   ".venv",
   "venv",
@@ -154,12 +158,16 @@ function normalizeHanBm25Query(query: string): string {
 }
 
 function parseQmdStatusVectorCount(raw: string): number | null {
-  const match = raw.match(/(?:^|\n)\s*Vectors:\s*(\d+)\b/i);
-  if (!match) {
-    return null;
+  for (const line of raw.split(/\r?\n/)) {
+    const match = line.match(/^\s*Vectors(?:\s*[:=]\s*|\s+)(\d+)\b/i);
+    if (match?.[1]) {
+      const count = Number.parseInt(match[1], 10);
+      if (Number.isFinite(count)) {
+        return count;
+      }
+    }
   }
-  const count = Number.parseInt(match[1] ?? "", 10);
-  return Number.isFinite(count) ? count : null;
+  return null;
 }
 
 function resolveStableJitterMs(params: { seed: string; windowMs: number }): number {
@@ -398,6 +406,7 @@ export class QmdMemoryManager implements MemorySearchManager {
   }
 
   private async initialize(mode: QmdManagerMode): Promise<void> {
+    const startTime = Date.now();
     this.bootstrapCollections();
     if (mode === "status") {
       return;
@@ -420,10 +429,16 @@ export class QmdMemoryManager implements MemorySearchManager {
 
     await this.ensureCollections();
     if (mode === "cli") {
+      log.info(
+        `qmd manager initialized for agent "${this.agentId}" mode=cli collections=${this.qmd.collections.length} durationMs=${Date.now() - startTime}`,
+      );
       return;
     }
 
     this.ensureWatcher();
+    log.info(
+      `qmd manager initialized for agent "${this.agentId}" mode=full collections=${this.qmd.collections.length} durationMs=${Date.now() - startTime}`,
+    );
 
     if (this.qmd.update.onBoot) {
       const bootRun = this.runUpdate("boot", true);
@@ -1455,6 +1470,10 @@ export class QmdMemoryManager implements MemorySearchManager {
       return;
     }
     const run = async () => {
+      const startTime = Date.now();
+      log.debug(
+        `qmd sync started for agent "${this.agentId}" reason=${reason} force=${force === true}`,
+      );
       await this.withQmdUpdateQueue(async () => {
         if (this.closed) {
           return;
@@ -1488,6 +1507,9 @@ export class QmdMemoryManager implements MemorySearchManager {
       }
       this.lastUpdateAt = Date.now();
       this.docPathCache.clear();
+      log.info(
+        `qmd sync completed for agent "${this.agentId}" reason=${reason} durationMs=${Date.now() - startTime}`,
+      );
     };
     this.pendingUpdate = run().finally(() => {
       this.pendingUpdate = null;
@@ -1509,7 +1531,10 @@ export class QmdMemoryManager implements MemorySearchManager {
     if (watchPaths.size === 0) {
       return;
     }
-    this.watcher = chokidar.watch(Array.from(watchPaths), {
+    const watchPathList = Array.from(watchPaths);
+    const startTime = Date.now();
+    log.info(`qmd watcher starting for agent "${this.agentId}" paths=${watchPathList.length}`);
+    this.watcher = chokidar.watch(watchPathList, {
       ignoreInitial: true,
       ignored: (watchPath) => shouldIgnoreMemoryWatchPath(watchPath),
       awaitWriteFinish: {
@@ -1524,6 +1549,11 @@ export class QmdMemoryManager implements MemorySearchManager {
     this.watcher.on("add", markDirty);
     this.watcher.on("change", markDirty);
     this.watcher.on("unlink", markDirty);
+    this.watcher.once("ready", () => {
+      log.info(
+        `qmd watcher ready for agent "${this.agentId}" paths=${watchPathList.length} durationMs=${Date.now() - startTime}`,
+      );
+    });
   }
 
   private resolveCollectionWatchPath(collection: ManagedCollection): string {

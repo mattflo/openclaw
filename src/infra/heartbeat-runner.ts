@@ -12,6 +12,7 @@ import {
 } from "../agents/agent-scope.js";
 import { appendCronStyleCurrentTimeLine } from "../agents/current-time.js";
 import { resolveEffectiveMessagesConfig } from "../agents/identity.js";
+import { isNestedAgentLane } from "../agents/lanes.js";
 import { resolveEmbeddedSessionLane } from "../agents/pi-embedded-runner/lanes.js";
 import { DEFAULT_HEARTBEAT_FILENAME } from "../agents/workspace.js";
 import { resolveHeartbeatReplyPayload } from "../auto-reply/heartbeat-reply-payload.js";
@@ -46,10 +47,15 @@ import {
 } from "../config/sessions/store.js";
 import type { AgentDefaultsConfig } from "../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { hasActiveCronJobs } from "../cron/active-jobs.js";
 import { resolveCronSession } from "../cron/isolated-agent/session.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getActivePluginChannelRegistry } from "../plugins/runtime.js";
-import { getQueueSize } from "../process/command-queue.js";
+import {
+  getCommandLaneSnapshots,
+  getQueueSize,
+  type CommandLaneSnapshot,
+} from "../process/command-queue.js";
 import { CommandLane } from "../process/lanes.js";
 import {
   isSubagentSessionKey,
@@ -69,10 +75,11 @@ import { loadOrCreateDeviceIdentity } from "./device-identity.js";
 import { formatErrorMessage, hasErrnoCode } from "./errors.js";
 import { isWithinActiveHours } from "./heartbeat-active-hours.js";
 import {
-  buildExecEventPrompt,
   buildCronEventPrompt,
+  buildExecEventPrompt,
   isCronSystemEvent,
   isExecCompletionEvent,
+  isRelayableExecCompletionEvent,
 } from "./heartbeat-events-filter.js";
 import { emitHeartbeatEvent, resolveIndicatorType } from "./heartbeat-events.js";
 import { resolveHeartbeatReasonKind } from "./heartbeat-reason.js";
@@ -91,9 +98,13 @@ import { createHeartbeatTypingCallbacks } from "./heartbeat-typing.js";
 import { resolveHeartbeatVisibility } from "./heartbeat-visibility.js";
 import {
   areHeartbeatsEnabled,
+  HEARTBEAT_SKIP_CRON_IN_PROGRESS,
+  HEARTBEAT_SKIP_LANES_BUSY,
+  HEARTBEAT_SKIP_REQUESTS_IN_FLIGHT,
   type HeartbeatRunResult,
   type HeartbeatWakeHandler,
   type HeartbeatWakeRequest,
+  isRetryableHeartbeatBusySkipReason,
   requestHeartbeatNow,
   setHeartbeatsEnabled,
   setHeartbeatWakeHandler,
@@ -116,6 +127,7 @@ export type HeartbeatDeps = OutboundSendDeps &
     getReplyFromConfig?: typeof import("./heartbeat-runner.runtime.js").getReplyFromConfig;
     runtime?: RuntimeEnv;
     getQueueSize?: (lane?: string) => number;
+    getCommandLaneSnapshots?: () => readonly CommandLaneSnapshot[];
     nowMs?: () => number;
   };
 
@@ -126,6 +138,35 @@ let heartbeatRunnerRuntimePromise: Promise<typeof import("./heartbeat-runner.run
 function loadHeartbeatRunnerRuntime() {
   heartbeatRunnerRuntimePromise ??= import("./heartbeat-runner.runtime.js");
   return heartbeatRunnerRuntimePromise;
+}
+
+const HEARTBEAT_ALWAYS_BUSY_LANES = [CommandLane.Cron, CommandLane.CronNested] as const;
+const HEARTBEAT_OPT_IN_BUSY_LANES = [CommandLane.Subagent, CommandLane.Nested] as const;
+
+function hasQueuedWorkInLanes(
+  lanes: readonly string[],
+  getSize: (lane?: string) => number,
+): boolean {
+  return lanes.some((lane) => getSize(lane) > 0);
+}
+
+function hasQueuedWorkInLaneSnapshots(
+  snapshots: readonly CommandLaneSnapshot[],
+  matchesLane: (lane: string) => boolean,
+): boolean {
+  return snapshots.some(
+    (snapshot) => matchesLane(snapshot.lane) && snapshot.activeCount + snapshot.queuedCount > 0,
+  );
+}
+
+function hasOptInBusyLaneWork(
+  getSize: (lane?: string) => number,
+  getSnapshots: () => readonly CommandLaneSnapshot[],
+): boolean {
+  return (
+    hasQueuedWorkInLanes(HEARTBEAT_OPT_IN_BUSY_LANES, getSize) ||
+    hasQueuedWorkInLaneSnapshots(getSnapshots(), isNestedAgentLane)
+  );
 }
 
 function resolveHeartbeatChannelPlugin(channel: string): ChannelPlugin | undefined {
@@ -643,6 +684,7 @@ async function resolveHeartbeatPreflight(params: {
 type HeartbeatPromptResolution = {
   prompt: string | null;
   hasExecCompletion: boolean;
+  hasRelayableExecCompletion: boolean;
   hasCronEvents: boolean;
 };
 
@@ -656,6 +698,40 @@ function appendHeartbeatWorkspacePathHint(prompt: string, workspaceDir: string):
     return prompt;
   }
   return `${prompt}\n${hint}`;
+}
+
+function stripHeartbeatTasksBlock(content: string): string {
+  const lines = content.split(/\r?\n/);
+  const kept: string[] = [];
+  let inTasksBlock = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!inTasksBlock && trimmed === "tasks:") {
+      inTasksBlock = true;
+      continue;
+    }
+
+    if (inTasksBlock) {
+      if (!trimmed) {
+        continue;
+      }
+      const isIndented = /^[\s]/.test(line);
+      const isTaskListItem = trimmed.startsWith("-");
+      const isTaskField =
+        trimmed.startsWith("interval:") ||
+        trimmed.startsWith("prompt:") ||
+        trimmed.startsWith("name:");
+      if (isIndented || isTaskListItem || isTaskField) {
+        continue;
+      }
+      inTasksBlock = false;
+    }
+
+    kept.push(line);
+  }
+
+  return kept.join("\n");
 }
 
 function resolveHeartbeatRunPrompt(params: {
@@ -681,6 +757,8 @@ function resolveHeartbeatRunPrompt(params: {
         .map((event) => event.text)
     : [];
   const hasExecCompletion = execEvents.length > 0;
+  const hasRelayableExecCompletion =
+    params.canRelayToUser && execEvents.some((event) => isRelayableExecCompletionEvent(event));
   const hasCronEvents = cronEvents.length > 0;
 
   if (params.preflight.tasks && params.preflight.tasks.length > 0) {
@@ -702,16 +780,24 @@ ${taskList}
 After completing all due tasks, reply HEARTBEAT_OK.`;
 
       if (params.heartbeatFileContent) {
-        const directives = params.heartbeatFileContent
-          .replace(/^[\s\S]*?^tasks:[\s\S]*?(?=^[^\s]|^$)/m, "")
-          .trim();
+        const directives = stripHeartbeatTasksBlock(params.heartbeatFileContent).trim();
         if (directives) {
           prompt += `\n\nAdditional context from HEARTBEAT.md:\n${directives}`;
         }
       }
-      return { prompt, hasExecCompletion: false, hasCronEvents: false };
+      return {
+        prompt,
+        hasExecCompletion: false,
+        hasRelayableExecCompletion: false,
+        hasCronEvents: false,
+      };
     }
-    return { prompt: null, hasExecCompletion: false, hasCronEvents: false };
+    return {
+      prompt: null,
+      hasExecCompletion: false,
+      hasRelayableExecCompletion: false,
+      hasCronEvents: false,
+    };
   }
 
   const basePrompt = hasExecCompletion
@@ -721,7 +807,7 @@ After completing all due tasks, reply HEARTBEAT_OK.`;
       : resolveHeartbeatPrompt(params.cfg, params.heartbeat);
   const prompt = appendHeartbeatWorkspacePathHint(basePrompt, params.workspaceDir);
 
-  return { prompt, hasExecCompletion, hasCronEvents };
+  return { prompt, hasExecCompletion, hasRelayableExecCompletion, hasCronEvents };
 }
 
 export async function runHeartbeatOnce(opts: {
@@ -755,9 +841,28 @@ export async function runHeartbeatOnce(opts: {
     return { status: "skipped", reason: "quiet-hours" };
   }
 
-  const queueSize = (opts.deps?.getQueueSize ?? getQueueSize)(CommandLane.Main);
-  if (queueSize > 0) {
-    return { status: "skipped", reason: "requests-in-flight" };
+  const getSize = opts.deps?.getQueueSize ?? getQueueSize;
+  const getSnapshots = opts.deps?.getCommandLaneSnapshots ?? getCommandLaneSnapshots;
+  if (getSize(CommandLane.Main) > 0) {
+    return { status: "skipped", reason: HEARTBEAT_SKIP_REQUESTS_IN_FLIGHT };
+  }
+
+  if (hasActiveCronJobs() || hasQueuedWorkInLanes(HEARTBEAT_ALWAYS_BUSY_LANES, getSize)) {
+    emitHeartbeatEvent({
+      status: "skipped",
+      reason: HEARTBEAT_SKIP_CRON_IN_PROGRESS,
+      durationMs: Date.now() - startedAt,
+    });
+    return { status: "skipped", reason: HEARTBEAT_SKIP_CRON_IN_PROGRESS };
+  }
+
+  if (heartbeat?.skipWhenBusy === true && hasOptInBusyLaneWork(getSize, getSnapshots)) {
+    emitHeartbeatEvent({
+      status: "skipped",
+      reason: HEARTBEAT_SKIP_LANES_BUSY,
+      durationMs: Date.now() - startedAt,
+    });
+    return { status: "skipped", reason: HEARTBEAT_SKIP_LANES_BUSY };
   }
 
   // Preflight centralizes trigger classification, event inspection, and HEARTBEAT.md gating.
@@ -782,14 +887,13 @@ export async function runHeartbeatOnce(opts: {
   // an active streaming turn.  The wake-layer retry (heartbeat-wake.ts) will
   // re-schedule this wake automatically.  See #14396 (closed without merge).
   const sessionLaneKey = resolveEmbeddedSessionLane(sessionKey);
-  const sessionLaneSize = (opts.deps?.getQueueSize ?? getQueueSize)(sessionLaneKey);
-  if (sessionLaneSize > 0) {
+  if (getSize(sessionLaneKey) > 0) {
     emitHeartbeatEvent({
       status: "skipped",
-      reason: "requests-in-flight",
+      reason: HEARTBEAT_SKIP_REQUESTS_IN_FLIGHT,
       durationMs: Date.now() - startedAt,
     });
-    return { status: "skipped", reason: "requests-in-flight" };
+    return { status: "skipped", reason: HEARTBEAT_SKIP_REQUESTS_IN_FLIGHT };
   }
 
   const previousUpdatedAt = entry?.updatedAt;
@@ -841,15 +945,16 @@ export async function runHeartbeatOnce(opts: {
     delivery.channel !== "none" && delivery.to && visibility.showAlerts,
   );
   const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
-  const { prompt, hasExecCompletion, hasCronEvents } = resolveHeartbeatRunPrompt({
-    cfg,
-    heartbeat,
-    preflight,
-    canRelayToUser,
-    workspaceDir,
-    startedAt,
-    heartbeatFileContent: preflight.heartbeatFileContent,
-  });
+  const { prompt, hasExecCompletion, hasRelayableExecCompletion, hasCronEvents } =
+    resolveHeartbeatRunPrompt({
+      cfg,
+      heartbeat,
+      preflight,
+      canRelayToUser,
+      workspaceDir,
+      startedAt,
+      heartbeatFileContent: preflight.heartbeatFileContent,
+    });
 
   // If no tasks are due, skip heartbeat entirely
   if (prompt === null) {
@@ -1112,14 +1217,15 @@ export async function runHeartbeatOnce(opts: {
     // Also, if normalized.text is empty due to token stripping but we have exec completion,
     // fall back to the original reply text.
     const execFallbackText =
-      hasExecCompletion && !normalized.text.trim() && replyPayload.text?.trim()
+      hasRelayableExecCompletion && !normalized.text.trim() && replyPayload.text?.trim()
         ? replyPayload.text.trim()
         : null;
     if (execFallbackText) {
       normalized.text = execFallbackText;
       normalized.shouldSkip = false;
     }
-    const shouldSkipMain = normalized.shouldSkip && !normalized.hasMedia && !hasExecCompletion;
+    const shouldSkipMain =
+      normalized.shouldSkip && !normalized.hasMedia && !hasRelayableExecCompletion;
     if (shouldSkipMain && reasoningPayloads.length === 0) {
       await restoreHeartbeatUpdatedAt({
         storePath,
@@ -1484,9 +1590,9 @@ export function startHeartbeatRunner(opts: {
     const startedAt = Date.now();
     const now = startedAt;
     let ran = false;
-    // Track requests-in-flight so we can skip re-arm in finally — the wake
+    // Track retryable busy skips so we can skip re-arm in finally — the wake
     // layer handles retry for this case (DEFAULT_RETRY_MS = 1 s).
-    let requestsInFlight = false;
+    let retryableBusySkip = false;
 
     try {
       if (requestedSessionKey || requestedAgentId) {
@@ -1504,6 +1610,10 @@ export function startHeartbeatRunner(opts: {
             sessionKey: requestedSessionKey,
             deps: { runtime: state.runtime },
           });
+          if (res.status === "skipped" && isRetryableHeartbeatBusySkipReason(res.reason)) {
+            retryableBusySkip = true;
+            return res;
+          }
           if (res.status !== "skipped" || res.reason !== "disabled") {
             advanceAgentSchedule(targetAgent, now, reason);
           }
@@ -1538,12 +1648,12 @@ export function startHeartbeatRunner(opts: {
           advanceAgentSchedule(agent, now, reason);
           continue;
         }
-        if (res.status === "skipped" && res.reason === "requests-in-flight") {
+        if (res.status === "skipped" && isRetryableHeartbeatBusySkipReason(res.reason)) {
           // Do not advance the schedule — the main lane is busy and the wake
           // layer will retry shortly (DEFAULT_RETRY_MS = 1 s).  Calling
           // scheduleNext() here would register a 0 ms timer that races with
           // the wake layer's 1 s retry and wins, bypassing the cooldown.
-          requestsInFlight = true;
+          retryableBusySkip = true;
           return res;
         }
         if (res.status !== "skipped" || res.reason !== "disabled") {
@@ -1559,9 +1669,9 @@ export function startHeartbeatRunner(opts: {
       }
       return { status: "skipped", reason: isInterval ? "not-due" : "disabled" };
     } finally {
-      // Always re-arm the timer — except for requests-in-flight, where the
+      // Always re-arm the timer — except for retryable busy skips, where the
       // wake layer (heartbeat-wake.ts) handles retry via schedule(DEFAULT_RETRY_MS).
-      if (!requestsInFlight) {
+      if (!retryableBusySkip) {
         scheduleNext();
       }
     }

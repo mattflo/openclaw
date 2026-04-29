@@ -50,6 +50,7 @@ export type BrowserServerState = {
   resolved: ResolvedBrowserConfig;
   profiles: Map<string, ProfileRuntimeState>;
   stopTrackedTabCleanup?: () => void;
+  stopUnhandledRejectionHandler?: () => void;
 };
 
 type BrowserProfileActions = {
