@@ -7,18 +7,7 @@ const execFileAsync = promisify(execFile);
 
 export type RttProviderMode = "mock-openai" | "live-frontier";
 
-export type RttCliOptions = {
-  providerMode: RttProviderMode;
-  runs: number;
-  samples: number;
-  sampleTimeoutMs: number;
-  harnessRoot: string;
-  output: string;
-  scenarios: string[];
-  timeoutMs: number;
-};
-
-export type RttResult = {
+type RttResult = {
   package: {
     spec: string;
     version: string;
@@ -52,7 +41,7 @@ export type RttResult = {
   };
 };
 
-export type TelegramQaSummary = {
+type TelegramQaSummary = {
   scenarios?: Array<{
     id?: string;
     rttMs?: number;
@@ -75,7 +64,7 @@ export type TelegramQaSummary = {
 };
 
 const OPENCLAW_PACKAGE_SPEC_RE =
-  /^openclaw@(beta|latest|[0-9]{4}\.[1-9][0-9]*\.[1-9][0-9]*(-[1-9][0-9]*|-beta\.[1-9][0-9]*)?)$/u;
+  /^openclaw@(main|beta|latest|[0-9]{4}\.[1-9][0-9]*\.[1-9][0-9]*(-[1-9][0-9]*|-beta\.[1-9][0-9]*)?)$/u;
 
 const REQUIRED_TELEGRAM_ENV = [
   "OPENCLAW_QA_TELEGRAM_GROUP_ID",
@@ -86,7 +75,7 @@ const REQUIRED_TELEGRAM_ENV = [
 export function validateOpenClawPackageSpec(spec: string) {
   if (!OPENCLAW_PACKAGE_SPEC_RE.test(spec)) {
     throw new Error(
-      `Package spec must be openclaw@beta, openclaw@latest, or an exact OpenClaw release version; got: ${spec}`,
+      `Package spec must be openclaw@main, openclaw@beta, openclaw@latest, or an exact OpenClaw release version; got: ${spec}`,
     );
   }
   return spec;
@@ -128,6 +117,7 @@ export function extractRtt(summary: TelegramQaSummary) {
 
 export function createHarnessEnv(params: {
   baseEnv: NodeJS.ProcessEnv;
+  packageTgz?: string;
   providerMode: RttProviderMode;
   scenarios: string[];
   spec: string;
@@ -140,6 +130,7 @@ export function createHarnessEnv(params: {
   return {
     ...params.baseEnv,
     OPENCLAW_NPM_TELEGRAM_PACKAGE_SPEC: params.spec,
+    ...(params.packageTgz ? { OPENCLAW_NPM_TELEGRAM_PACKAGE_TGZ: params.packageTgz } : {}),
     OPENCLAW_NPM_TELEGRAM_PACKAGE_LABEL: `${params.spec} (${params.version})`,
     OPENCLAW_NPM_TELEGRAM_PROVIDER_MODE: params.providerMode,
     OPENCLAW_NPM_TELEGRAM_SCENARIOS: params.scenarios.join(","),
@@ -187,6 +178,20 @@ export async function resolvePublishedVersion(spec: string) {
     throw new Error(`npm did not return a version for ${spec}.`);
   }
   return parsed.trim();
+}
+
+export async function resolveMainVersion(harnessRoot: string) {
+  const packageJson = JSON.parse(
+    await fs.readFile(path.join(harnessRoot, "package.json"), "utf8"),
+  ) as { version?: unknown };
+  if (typeof packageJson.version !== "string" || packageJson.version.trim().length === 0) {
+    throw new Error("OpenClaw package.json must contain a non-empty version.");
+  }
+  const { stdout } = await execFileAsync("git", ["rev-parse", "--short=10", "HEAD"], {
+    cwd: harnessRoot,
+    timeout: 10_000,
+  });
+  return `${packageJson.version.trim()}+${stdout.trim()}`;
 }
 
 export async function readTelegramSummary(summaryPath: string) {
@@ -249,7 +254,3 @@ export function buildRttResult(params: {
     artifacts: params.artifacts,
   };
 }
-
-export const __testing = {
-  REQUIRED_TELEGRAM_ENV,
-};

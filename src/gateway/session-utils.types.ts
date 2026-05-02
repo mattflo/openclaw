@@ -18,14 +18,19 @@ export type GatewaySessionsDefaults = {
   thinkingDefault?: string;
 };
 
-export type GatewayThinkingLevelOption = {
+type GatewayThinkingLevelOption = {
   id: string;
   label: string;
 };
 
 export type SessionRunStatus = "running" | "done" | "failed" | "killed" | "timeout";
 
-export type SubagentRunState = "active" | "interrupted" | "historical";
+type SubagentRunState = "active" | "interrupted" | "historical";
+
+export type SessionCompactionCheckpointPreview = Pick<
+  SessionCompactionCheckpoint,
+  "checkpointId" | "createdAt" | "reason"
+>;
 
 export type GatewaySessionRow = {
   key: string;
@@ -84,7 +89,7 @@ export type GatewaySessionRow = {
   lastAccountId?: string;
   lastThreadId?: SessionEntry["lastThreadId"];
   compactionCheckpointCount?: number;
-  latestCompactionCheckpoint?: SessionCompactionCheckpoint;
+  latestCompactionCheckpoint?: SessionCompactionCheckpointPreview;
   pluginExtensions?: PluginSessionExtensionProjection[];
 };
 

@@ -73,6 +73,23 @@ async function readSessionMessages(sessionFile: string) {
     );
 }
 
+async function readSessionFileEntries(sessionFile: string) {
+  const raw = await fs.readFile(sessionFile, "utf-8");
+  return raw
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map(
+      (line) =>
+        JSON.parse(line) as {
+          type?: string;
+          id?: string;
+          parentId?: string | null;
+          cwd?: string;
+          message?: { role?: string };
+        },
+    );
+}
+
 describe("CLI attempt execution", () => {
   let tmpDir: string;
   let storePath: string;
@@ -370,10 +387,22 @@ describe("CLI attempt execution", () => {
       storePath,
       sessionAgentId: "main",
       sessionCwd: tmpDir,
+      config: {},
     });
 
     const sessionFile = updatedEntry?.sessionFile;
     expect(sessionFile).toBeTruthy();
+    const entries = await readSessionFileEntries(sessionFile!);
+    expect(entries[0]).toMatchObject({
+      type: "session",
+      id: sessionEntry.sessionId,
+      cwd: tmpDir,
+    });
+    expect(entries[1]).toMatchObject({ type: "message", parentId: null });
+    expect(entries[2]).toMatchObject({
+      type: "message",
+      parentId: entries[1]?.id,
+    });
     const messages = await readSessionMessages(sessionFile!);
     expect(messages).toHaveLength(2);
     expect(messages[0]).toMatchObject({
@@ -415,6 +444,7 @@ describe("CLI attempt execution", () => {
       storePath,
       sessionAgentId: "main",
       sessionCwd: tmpDir,
+      config: {},
     });
 
     const messages = await readSessionMessages(updatedEntry?.sessionFile ?? "");

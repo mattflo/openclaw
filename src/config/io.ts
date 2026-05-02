@@ -5,7 +5,6 @@ import path from "node:path";
 import JSON5 from "json5";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope-config.js";
 import { ensureOwnerDisplaySecret } from "../agents/owner-display.js";
-import { applyRuntimeLegacyConfigMigrations } from "../commands/doctor/shared/runtime-compat-api.js";
 import { loadDotEnv } from "../infra/dotenv.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { resolveRequiredHomeDir } from "../infra/home-dir.js";
@@ -15,10 +14,6 @@ import {
   shouldDeferShellEnvFallback,
   shouldEnableShellEnvFallback,
 } from "../infra/shell-env.js";
-import {
-  collectRelevantDoctorPluginIds,
-  listPluginDoctorLegacyConfigRules,
-} from "../plugins/doctor-contract-registry.js";
 import {
   loadInstalledPluginIndexInstallRecordsSync,
   resolveInstalledPluginIndexRecordsStorePath,
@@ -74,14 +69,13 @@ import {
   resolveManagedUnsetPathsForWrite,
   resolveWriteEnvSnapshotForPath,
 } from "./io.write-prepare.js";
-import { findLegacyConfigIssues } from "./legacy.js";
 import {
   asResolvedSourceConfig,
   asRuntimeConfig,
   materializeRuntimeConfig,
 } from "./materialize.js";
 import { applyMergePatch } from "./merge-patch.js";
-import { resolveConfigPath, resolveStateDir } from "./paths.js";
+import { resolveConfigPath, resolveIncludeRoots, resolveStateDir } from "./paths.js";
 import {
   extractShippedPluginInstallConfigRecords,
   stripShippedPluginInstallConfigRecords,
@@ -156,6 +150,7 @@ type ShippedPluginInstallConfigReadMigration = {
 
 const CONFIG_HEALTH_STATE_FILENAME = "config-health.json";
 const loggedInvalidConfigs = new Set<string>();
+const warnedFutureTouchedVersions = new Set<string>();
 
 type ConfigHealthFingerprint = {
   hash: string;
@@ -441,28 +436,28 @@ async function writeConfigHealthState(
   deps: Required<ConfigIoDeps>,
   state: ConfigHealthState,
 ): Promise<void> {
+  const healthPath = resolveConfigHealthStatePath(deps.env, deps.homedir);
   try {
-    const healthPath = resolveConfigHealthStatePath(deps.env, deps.homedir);
     await deps.fs.promises.mkdir(path.dirname(healthPath), { recursive: true, mode: 0o700 });
     await deps.fs.promises.writeFile(healthPath, `${JSON.stringify(state, null, 2)}\n`, {
       encoding: "utf-8",
       mode: 0o600,
     });
-  } catch {
-    // best-effort
+  } catch (err) {
+    deps.logger.warn(`Config health-state write failed: ${healthPath}: ${formatErrorMessage(err)}`);
   }
 }
 
 function writeConfigHealthStateSync(deps: Required<ConfigIoDeps>, state: ConfigHealthState): void {
+  const healthPath = resolveConfigHealthStatePath(deps.env, deps.homedir);
   try {
-    const healthPath = resolveConfigHealthStatePath(deps.env, deps.homedir);
     deps.fs.mkdirSync(path.dirname(healthPath), { recursive: true, mode: 0o700 });
     deps.fs.writeFileSync(healthPath, `${JSON.stringify(state, null, 2)}\n`, {
       encoding: "utf-8",
       mode: 0o600,
     });
-  } catch {
-    // best-effort
+  } catch (err) {
+    deps.logger.warn(`Config health-state write failed: ${healthPath}: ${formatErrorMessage(err)}`);
   }
 }
 
@@ -765,6 +760,8 @@ async function observeConfigSnapshot(
       clobberedPath,
       restoredFromBackup: false,
       restoredBackupPath: null,
+      restoreErrorCode: null,
+      restoreErrorMessage: null,
     },
   });
 
@@ -895,6 +892,8 @@ function observeConfigSnapshotSync(
       clobberedPath,
       restoredFromBackup: false,
       restoredBackupPath: null,
+      restoreErrorCode: null,
+      restoreErrorMessage: null,
     },
   });
 
@@ -948,6 +947,10 @@ function warnIfConfigFromFuture(cfg: OpenClawConfig, logger: Pick<typeof console
     return;
   }
   if (shouldWarnOnTouchedVersion(VERSION, touched)) {
+    if (warnedFutureTouchedVersions.has(touched)) {
+      return;
+    }
+    warnedFutureTouchedVersions.add(touched);
     logger.warn(
       `Config was last written by a newer OpenClaw (${touched}); current version is ${VERSION}.`,
     );
@@ -1060,14 +1063,11 @@ async function recoverConfigFromJsonRootSuffixWithDeps(params: {
     return false;
   }
   const readResolution = resolveConfigForRead(resolved, params.deps.env);
-  const legacyResolution = resolveLegacyConfigForRead(
-    readResolution.resolvedConfigRaw,
-    suffixRecovery.parsed,
-  );
   const validated = validateConfigObjectWithPlugins(
-    stripShippedPluginInstallConfigRecords(legacyResolution.effectiveConfigRaw),
+    stripShippedPluginInstallConfigRecords(readResolution.resolvedConfigRaw),
     {
       env: params.deps.env,
+      sourceRaw: suffixRecovery.parsed,
     },
   );
   if (!validated.ok) {
@@ -1089,27 +1089,27 @@ type ConfigReadResolution = {
   envWarnings: EnvSubstitutionWarning[];
 };
 
-type LegacyMigrationResolution = {
-  effectiveConfigRaw: unknown;
-  sourceLegacyIssues: LegacyConfigIssue[];
-};
-
 function resolveConfigIncludesForRead(
   parsed: unknown,
   configPath: string,
   deps: Required<ConfigIoDeps>,
 ): unknown {
-  return resolveConfigIncludes(parsed, configPath, {
-    readFile: (candidate) => deps.fs.readFileSync(candidate, "utf-8"),
-    readFileWithGuards: ({ includePath, resolvedPath, rootRealDir }) =>
-      readConfigIncludeFileWithGuards({
-        includePath,
-        resolvedPath,
-        rootRealDir,
-        ioFs: deps.fs,
-      }),
-    parseJson: (raw) => deps.json5.parse(raw),
-  });
+  return resolveConfigIncludes(
+    parsed,
+    configPath,
+    {
+      readFile: (candidate) => deps.fs.readFileSync(candidate, "utf-8"),
+      readFileWithGuards: ({ includePath, resolvedPath, rootRealDir }) =>
+        readConfigIncludeFileWithGuards({
+          includePath,
+          resolvedPath,
+          rootRealDir,
+          ioFs: deps.fs,
+        }),
+      parseJson: (raw) => deps.json5.parse(raw),
+    },
+    { allowedRoots: resolveIncludeRoots(deps.env, deps.homedir) },
+  );
 }
 
 function resolveConfigForRead(
@@ -1131,29 +1131,6 @@ function resolveConfigForRead(
     // Capture env snapshot after substitution for write-time ${VAR} restoration.
     envSnapshotForRestore: { ...env } as Record<string, string | undefined>,
     envWarnings,
-  };
-}
-
-function resolveLegacyConfigForRead(
-  resolvedConfigRaw: unknown,
-  sourceRaw: unknown,
-): LegacyMigrationResolution {
-  const pluginIds = collectRelevantDoctorPluginIds(resolvedConfigRaw);
-  const sourceLegacyIssues = findLegacyConfigIssues(
-    resolvedConfigRaw,
-    sourceRaw,
-    listPluginDoctorLegacyConfigRules({ pluginIds }),
-  );
-  if (!resolvedConfigRaw || typeof resolvedConfigRaw !== "object") {
-    return {
-      effectiveConfigRaw: resolvedConfigRaw,
-      sourceLegacyIssues,
-    };
-  }
-  const compat = applyRuntimeLegacyConfigMigrations(resolvedConfigRaw);
-  return {
-    effectiveConfigRaw: compat.next ?? resolvedConfigRaw,
-    sourceLegacyIssues,
   };
 }
 
@@ -1513,11 +1490,9 @@ export function createConfigIO(
         deps.env,
       );
       const resolvedConfig = readResolution.resolvedConfigRaw;
-      const legacyResolution = resolveLegacyConfigForRead(resolvedConfig, effectiveParsed);
-      const installMigration = migrateAndStripShippedPluginInstallConfigRecords(
-        legacyResolution.effectiveConfigRaw,
-        { rootConfigRaw: effectiveParsed },
-      );
+      const installMigration = migrateAndStripShippedPluginInstallConfigRecords(resolvedConfig, {
+        rootConfigRaw: effectiveParsed,
+      });
       const effectiveConfigRaw = installMigration.config;
       const snapshotRaw = installMigration.persistedRootRaw ?? effectiveRaw;
       const snapshotParsed = installMigration.persistedRootParsed ?? effectiveParsed;
@@ -1541,7 +1516,7 @@ export function createConfigIO(
             hash,
             issues: [],
             warnings: [],
-            legacyIssues: legacyResolution.sourceLegacyIssues,
+            legacyIssues: [],
           }),
         });
         return {};
@@ -1556,6 +1531,7 @@ export function createConfigIO(
       const validated = validateConfigObjectWithPlugins(effectiveConfigRaw, {
         env: deps.env,
         pluginValidation: overrides.pluginValidation,
+        sourceRaw: effectiveParsed,
       });
       if (!validated.ok) {
         observeLoadConfigSnapshot({
@@ -1570,7 +1546,7 @@ export function createConfigIO(
             hash,
             issues: validated.issues,
             warnings: validated.warnings,
-            legacyIssues: legacyResolution.sourceLegacyIssues,
+            legacyIssues: [],
           }),
         });
         throwInvalidConfig({
@@ -1603,7 +1579,7 @@ export function createConfigIO(
           hash,
           issues: [],
           warnings: validated.warnings,
-          legacyIssues: legacyResolution.sourceLegacyIssues,
+          legacyIssues: [],
         }),
       });
       return finalizeLoadedRuntimeConfig(cfg);
@@ -1623,7 +1599,9 @@ export function createConfigIO(
   }
 
   async function readConfigFileSnapshotInternal(
-    options: { persistShippedPluginInstallMigration?: boolean } = {},
+    options: {
+      persistShippedPluginInstallMigration?: boolean;
+    } = {},
   ): Promise<ReadConfigFileSnapshotInternalResult> {
     maybeLoadDotEnvForConfig(deps.env);
     const exists = deps.fs.existsSync(configPath);
@@ -1741,13 +1719,10 @@ export function createConfigIO(
       }));
 
       const resolvedConfigRaw = readResolution.resolvedConfigRaw;
-      const legacyResolution = await deps.measure("config.snapshot.read.legacy", () =>
-        resolveLegacyConfigForRead(resolvedConfigRaw, effectiveParsed),
-      );
       const installMigration = await deps.measure(
         "config.snapshot.read.plugin-install-migration",
         () =>
-          migrateAndStripShippedPluginInstallConfigRecords(legacyResolution.effectiveConfigRaw, {
+          migrateAndStripShippedPluginInstallConfigRecords(resolvedConfigRaw, {
             persist: options.persistShippedPluginInstallMigration !== false,
             rootConfigRaw: effectiveParsed,
           }),
@@ -1777,6 +1752,7 @@ export function createConfigIO(
           env: deps.env,
           pluginValidation: overrides.pluginValidation,
           loadPluginMetadataSnapshot: loadValidationPluginMetadataSnapshot,
+          sourceRaw: effectiveParsed,
         }),
       );
       if (!validated.ok) {
@@ -1792,7 +1768,7 @@ export function createConfigIO(
             hash: snapshotHash,
             issues: validated.issues,
             warnings: [...validated.warnings, ...envVarWarnings],
-            legacyIssues: legacyResolution.sourceLegacyIssues,
+            legacyIssues: [],
           }),
         });
       }
@@ -1816,7 +1792,7 @@ export function createConfigIO(
             hash: snapshotHash,
             issues: [],
             warnings: [...validated.warnings, ...envVarWarnings],
-            legacyIssues: legacyResolution.sourceLegacyIssues,
+            legacyIssues: [],
           }),
           envSnapshotForRestore: readResolution.envSnapshotForRestore,
           pluginMetadataSnapshot,
@@ -1957,13 +1933,7 @@ export function createConfigIO(
       }
 
       const readResolution = resolveConfigForRead(resolved, deps.env);
-      const legacyResolution = resolveLegacyConfigForRead(
-        readResolution.resolvedConfigRaw,
-        recovered.parsed,
-      );
-      return coerceConfig(
-        stripShippedPluginInstallConfigRecords(legacyResolution.effectiveConfigRaw),
-      );
+      return coerceConfig(stripShippedPluginInstallConfigRecords(readResolution.resolvedConfigRaw));
     } catch {
       return {};
     }
@@ -1994,17 +1964,22 @@ export function createConfigIO(
         unsetPaths,
       });
       try {
-        const resolvedIncludes = resolveConfigIncludes(snapshot.parsed, configPath, {
-          readFile: (candidate) => deps.fs.readFileSync(candidate, "utf-8"),
-          readFileWithGuards: ({ includePath, resolvedPath, rootRealDir }) =>
-            readConfigIncludeFileWithGuards({
-              includePath,
-              resolvedPath,
-              rootRealDir,
-              ioFs: deps.fs,
-            }),
-          parseJson: (raw) => deps.json5.parse(raw),
-        });
+        const resolvedIncludes = resolveConfigIncludes(
+          snapshot.parsed,
+          configPath,
+          {
+            readFile: (candidate) => deps.fs.readFileSync(candidate, "utf-8"),
+            readFileWithGuards: ({ includePath, resolvedPath, rootRealDir }) =>
+              readConfigIncludeFileWithGuards({
+                includePath,
+                resolvedPath,
+                rootRealDir,
+                ioFs: deps.fs,
+              }),
+            parseJson: (raw) => deps.json5.parse(raw),
+          },
+          { allowedRoots: resolveIncludeRoots(deps.env, deps.homedir) },
+        );
         const collected = new Map<string, string>();
         collectEnvRefPaths(resolvedIncludes, "", collected);
         if (collected.size > 0) {

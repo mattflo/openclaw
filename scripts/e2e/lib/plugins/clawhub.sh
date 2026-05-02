@@ -3,7 +3,7 @@ run_plugins_clawhub_scenario() {
     echo "Skipping ClawHub plugin install and uninstall (OPENCLAW_PLUGINS_E2E_CLAWHUB=0)."
   else
     echo "Testing ClawHub kitchen-sink plugin install and uninstall..."
-    CLAWHUB_PLUGIN_SPEC="${OPENCLAW_PLUGINS_E2E_CLAWHUB_SPEC:-clawhub:openclaw-kitchen-sink}"
+    CLAWHUB_PLUGIN_SPEC="${OPENCLAW_PLUGINS_E2E_CLAWHUB_SPEC:-clawhub:@openclaw/kitchen-sink}"
     CLAWHUB_PLUGIN_ID="${OPENCLAW_PLUGINS_E2E_CLAWHUB_ID:-openclaw-kitchen-sink-fixture}"
     export CLAWHUB_PLUGIN_SPEC CLAWHUB_PLUGIN_ID
 
@@ -48,6 +48,12 @@ run_plugins_clawhub_scenario() {
     node "$OPENCLAW_ENTRY" plugins inspect "$CLAWHUB_PLUGIN_ID" --json >/tmp/plugins-clawhub-inspect.json
 
     node scripts/e2e/lib/plugins/assertions.mjs clawhub-installed
+
+    node "$OPENCLAW_ENTRY" plugins update "$CLAWHUB_PLUGIN_ID" >/tmp/plugins-clawhub-update.log 2>&1
+    node "$OPENCLAW_ENTRY" plugins list --json >/tmp/plugins-clawhub-updated.json
+    node "$OPENCLAW_ENTRY" plugins inspect "$CLAWHUB_PLUGIN_ID" --json >/tmp/plugins-clawhub-updated-inspect.json
+
+    node scripts/e2e/lib/plugins/assertions.mjs clawhub-updated
 
     run_logged uninstall-clawhub node "$OPENCLAW_ENTRY" plugins uninstall "$CLAWHUB_PLUGIN_SPEC" --force
     node "$OPENCLAW_ENTRY" plugins list --json >/tmp/plugins-clawhub-uninstalled.json

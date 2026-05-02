@@ -1093,6 +1093,7 @@
                 "group": "Configuration",
                 "pages": [
                   "channels/pairing",
+                  "channels/access-groups",
                   "channels/group-messages",
                   "channels/groups",
                   "channels/broadcast-groups",
@@ -1153,6 +1154,7 @@
                 "group": "Multi-agent",
                 "pages": [
                   "concepts/multi-agent",
+                  "concepts/parallel-specialist-lanes",
                   "concepts/presence",
                   "concepts/delegate-architecture"
                 ]
@@ -1181,6 +1183,8 @@
                 "pages": [
                   "tools/plugin",
                   "plugins/community",
+                  "plugins/plugin-inventory",
+                  "plugins/reference",
                   "plugins/bundles",
                   "plugins/dependency-resolution",
                   "plugins/codex-harness",
@@ -1732,7 +1736,7 @@
               },
               {
                 "group": "Testing",
-                "pages": ["help/testing", "help/testing-live"]
+                "pages": ["help/testing", "help/testing-updates-plugins", "help/testing-live"]
               },
               {
                 "group": "Diagnostics",
