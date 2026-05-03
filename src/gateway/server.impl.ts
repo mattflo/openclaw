@@ -42,7 +42,6 @@ import {
   clearCurrentPluginMetadataSnapshot,
   setCurrentPluginMetadataSnapshot,
 } from "../plugins/current-plugin-metadata-snapshot.js";
-import { runGlobalGatewayStopSafely } from "../plugins/hook-runner-global.js";
 import type { PluginHookGatewayCronService } from "../plugins/hook-types.js";
 import {
   pinActivePluginChannelRegistry,
@@ -55,10 +54,6 @@ import {
   clearSecretsRuntimeSnapshot,
   getActiveSecretsRuntimeSnapshot,
 } from "../secrets/runtime.js";
-import {
-  getInspectableTaskRegistrySummary,
-  stopTaskRegistryMaintenance,
-} from "../tasks/task-registry.maintenance.js";
 import { createAuthRateLimiter, type AuthRateLimiter } from "./auth-rate-limit.js";
 import { resolveGatewayAuth } from "./auth.js";
 import {
@@ -68,10 +63,11 @@ import {
 import { createGatewayAuxHandlers } from "./server-aux-handlers.js";
 import { createChannelManager } from "./server-channels.js";
 import { resolveGatewayControlUiRootState } from "./server-control-ui-root.js";
-import { buildGatewayCronService } from "./server-cron.js";
+import { createLazyGatewayCronState } from "./server-cron-lazy.js";
 import { applyGatewayLaneConcurrency } from "./server-lanes.js";
 import { createGatewayServerLiveState, type GatewayServerLiveState } from "./server-live-state.js";
 import { GATEWAY_EVENTS } from "./server-methods-list.js";
+import type { GatewayRequestHandlers } from "./server-methods/types.js";
 import { loadGatewayModelCatalog } from "./server-model-catalog.js";
 import { bootstrapGatewayNetworkRuntime } from "./server-network-runtime.js";
 import { createGatewayNodeSessionRuntime } from "./server-node-session-runtime.js";
@@ -81,6 +77,7 @@ import { createGatewayRequestContext } from "./server-request-context.js";
 import { resolveGatewayRuntimeConfig } from "./server-runtime-config.js";
 import {
   activateGatewayScheduledServices,
+  startGatewayCronWithLogging,
   startGatewayRuntimeServices,
 } from "./server-runtime-services.js";
 import { createGatewayRuntimeState } from "./server-runtime-state.js";
@@ -381,6 +378,23 @@ function createGatewayStartupTrace() {
   };
 }
 
+function collectProcessMemoryUsageMb(): ReadonlyArray<readonly [string, number]> {
+  const usage = process.memoryUsage();
+  const toMb = (bytes: number) => bytes / 1024 / 1024;
+  return [
+    ["rssMb", toMb(usage.rss)],
+    ["heapTotalMb", toMb(usage.heapTotal)],
+    ["heapUsedMb", toMb(usage.heapUsed)],
+    ["externalMb", toMb(usage.external)],
+    ["arrayBuffersMb", toMb(usage.arrayBuffers)],
+  ];
+}
+
+async function stopTaskRegistryMaintenanceOnDemand(): Promise<void> {
+  const { stopTaskRegistryMaintenance } = await import("../tasks/task-registry.maintenance.js");
+  stopTaskRegistryMaintenance();
+}
+
 type AuthRateLimitConfig = Parameters<typeof createAuthRateLimiter>[0];
 
 function createGatewayAuthRateLimiters(rateLimitConfig: AuthRateLimitConfig | undefined): {
@@ -555,12 +569,13 @@ export async function startGatewayServer(
     startDiagnosticHeartbeat(undefined, { getConfig: getRuntimeConfig });
   }
   setGatewaySigusr1RestartPolicy({ allowExternal: isRestartEnabled(cfgAtStart) });
+  let getActiveTaskCount = () => 0;
   setPreRestartDeferralCheck(
     () =>
       getTotalQueueSize() +
       getTotalPendingReplies() +
       getActiveEmbeddedRunCount() +
-      getInspectableTaskRegistrySummary().active,
+      getActiveTaskCount(),
   );
   // Unconditional startup migration: seed gateway.controlUi.allowedOrigins for existing
   // non-loopback installs that upgraded to v2026.2.26+ without required origins.
@@ -835,7 +850,7 @@ export async function startGatewayServer(
   runtimeState = createGatewayServerLiveState({
     hooksConfig: initialHooksConfig,
     hookClientIpConfig: initialHookClientIpConfig,
-    cronState: buildGatewayCronService({
+    cronState: createLazyGatewayCronState({
       cfg: cfgAtStart,
       deps,
       broadcast,
@@ -874,6 +889,7 @@ export async function startGatewayServer(
     refreshGatewayHealthSnapshot({
       ...opts,
       getRuntimeSnapshot,
+      getEventLoopHealth: readinessEventLoopHealth.snapshot,
     });
   const createCloseHandler =
     () => async (opts?: { reason?: string; restartExpectedMs?: number | null }) => {
@@ -889,7 +905,7 @@ export async function startGatewayServer(
         cron: runtimeState.cronState.cron,
         heartbeatRunner: runtimeState.heartbeatRunner,
         updateCheckStop: runtimeState.stopGatewayUpdateCheck,
-        stopTaskRegistryMaintenance,
+        stopTaskRegistryMaintenance: stopTaskRegistryMaintenanceOnDemand,
         nodePresenceTimers,
         broadcast,
         tickInterval: runtimeState.tickInterval,
@@ -957,16 +973,12 @@ export async function startGatewayServer(
           runtimeState.skillsRefreshTimer = timer;
         },
         getRuntimeConfig,
+        startupTrace,
       }),
     );
     runtimeState.bonjourStop = earlyRuntime.bonjourStop;
+    getActiveTaskCount = earlyRuntime.getActiveTaskCount;
     runtimeState.skillsChangeUnsub = earlyRuntime.skillsChangeUnsub;
-    if (earlyRuntime.maintenance) {
-      runtimeState.tickInterval = earlyRuntime.maintenance.tickInterval;
-      runtimeState.healthInterval = earlyRuntime.maintenance.healthInterval;
-      runtimeState.dedupeCleanup = earlyRuntime.maintenance.dedupeCleanup;
-      runtimeState.mediaCleanup = earlyRuntime.maintenance.mediaCleanup;
-    }
 
     Object.assign(
       runtimeState,
@@ -1005,7 +1017,7 @@ export async function startGatewayServer(
       stopChannel,
       logChannels,
     });
-    const attachedGatewayExtraHandlers = {
+    const attachedGatewayExtraHandlers: GatewayRequestHandlers = {
       ...pluginRegistry.gatewayHandlers,
       ...extraHandlers,
     };
@@ -1221,6 +1233,7 @@ export async function startGatewayServer(
       findRunningWizard,
       purgeWizardSession,
       getRuntimeSnapshot,
+      getEventLoopHealth: readinessEventLoopHealth.snapshot,
       startChannel,
       stopChannel,
       markChannelLoggedOut,
@@ -1304,6 +1317,7 @@ export async function startGatewayServer(
         deps,
         sessionDeliveryRecoveryMaxEnqueuedAt,
         cron: runtimeState.cronState.cron,
+        startCron: false,
         logCron,
         log,
         pluginLookUpTable,
@@ -1351,6 +1365,7 @@ export async function startGatewayServer(
                 baseMethods,
                 startupPluginIds,
                 pluginLookUpTable,
+                startupTrace,
               }),
         onStartupPluginsLoading: () => {
           startupPendingReason = "startup-sidecars";
@@ -1373,6 +1388,7 @@ export async function startGatewayServer(
         deferSidecars: opts.deferStartupSidecars === true,
       }),
     ));
+    startupTrace.detail("memory.ready", collectProcessMemoryUsageMb());
     startupTrace.mark("ready");
     postAttachRuntimeReturned = true;
     activateScheduledServicesWhenReady();
@@ -1421,6 +1437,20 @@ export async function startGatewayServer(
     await promoteConfigSnapshotToLastKnownGood(startupLastGoodSnapshot).catch((err) => {
       log.warn(`gateway: failed to promote config last-known-good backup: ${String(err)}`);
     });
+    if (!minimalTestGateway) {
+      const maintenance = await earlyRuntime.startMaintenance();
+      if (maintenance) {
+        runtimeState.tickInterval = maintenance.tickInterval;
+        runtimeState.healthInterval = maintenance.healthInterval;
+        runtimeState.dedupeCleanup = maintenance.dedupeCleanup;
+        runtimeState.mediaCleanup = maintenance.mediaCleanup;
+      }
+      startGatewayCronWithLogging({
+        cron: runtimeState.cronState.cron,
+        logCron,
+      });
+    }
+    startupTrace.detail("memory.post-ready", collectProcessMemoryUsageMb());
   } catch (err) {
     await closeOnStartupFailure();
     throw err;
@@ -1432,6 +1462,7 @@ export async function startGatewayServer(
     close: async (opts) => {
       try {
         // Run gateway_stop plugin hook before shutdown
+        const { runGlobalGatewayStopSafely } = await import("../plugins/hook-runner-global.js");
         await runGlobalGatewayStopSafely({
           event: { reason: opts?.reason ?? "gateway stopping" },
           ctx: { port },

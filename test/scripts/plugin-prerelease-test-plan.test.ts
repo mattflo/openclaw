@@ -36,6 +36,7 @@ describe("scripts/lib/plugin-prerelease-test-plan.mjs", () => {
 
     expect(plan.dockerLanes).toEqual([
       "npm-onboard-channel-agent",
+      "npm-onboard-discord-channel-agent",
       "doctor-switch",
       "update-channel-switch",
       "plugins-offline",
@@ -98,14 +99,14 @@ describe("scripts/lib/plugin-prerelease-test-plan.mjs", () => {
         stateScenario: "empty",
       }),
     );
-    expect(script).toContain("npm:@openclaw/kitchen-sink@latest");
-    expect(script).toContain("npm-latest-conformance");
-    expect(script).toContain("npm-latest-adversarial");
+    expect(script).toContain("npm:@openclaw/kitchen-sink@0.1.5");
+    expect(script).toContain("npm-pinned-conformance");
+    expect(script).toContain("npm-pinned-adversarial");
     expect(script).toContain("npm:@openclaw/kitchen-sink@beta");
     expect(script).toContain("clawhub:@openclaw/kitchen-sink@latest");
     expect(script).toContain("clawhub:@openclaw/kitchen-sink@beta");
     expect(script).toContain(
-      "npm-to-clawhub|clawhub:@openclaw/kitchen-sink@latest|openclaw-kitchen-sink-fixture|clawhub|success|basic||npm:@openclaw/kitchen-sink@latest",
+      "npm-to-clawhub|clawhub:@openclaw/kitchen-sink@latest|openclaw-kitchen-sink-fixture|clawhub|success|basic||${KITCHEN_SINK_NPM_SPEC}",
     );
     expect(script).toContain("scripts/e2e/lib/kitchen-sink-plugin/sweep.sh");
     expect(sweepScript).toContain('plugins install "$KITCHEN_SINK_SPEC"');
@@ -131,6 +132,9 @@ describe("scripts/lib/plugin-prerelease-test-plan.mjs", () => {
     expect(assertionsScript).toContain("assertCutoverPreinstalled");
     expect(assertionsScript).toContain("record.source !== source");
     expect(assertionsScript).toContain("record.clawhubPackage !== packageName");
+    expect(assertionsScript).toContain("record.clawpackSha256");
+    expect(assertionsScript).toContain("record.artifactKind");
+    expect(assertionsScript).toContain("record.npmIntegrity");
     expect(assertionsScript).toContain("assertClawHubExternalInstallContract");
     expect(assertionsScript).toContain("expectedErrorMessages");
     expect(assertionsScript).toContain(
@@ -139,6 +143,9 @@ describe("scripts/lib/plugin-prerelease-test-plan.mjs", () => {
     expect(assertionsScript).toContain("!INVALID_PROBE_DIAGNOSTIC_SURFACE_MODES.has(surfaceMode)");
     expect(readFileSync("scripts/e2e/lib/clawhub-fixture-server.cjs", "utf8")).toContain(
       'from "openclaw/plugin-sdk/plugin-entry"',
+    );
+    expect(readFileSync("scripts/e2e/lib/clawhub-fixture-server.cjs", "utf8")).toContain(
+      "X-ClawHub-Artifact-Sha256",
     );
     expect(script).toContain("docker stats --no-stream");
     expect(sweepScript).toContain("scan_logs_for_unexpected_errors");
@@ -167,6 +174,7 @@ describe("scripts/lib/plugin-prerelease-test-plan.mjs", () => {
     expect(assertionsScript).toContain('node_modules", "openclaw');
     expect(fixtureServer).toContain('"is-number": "7.0.0"');
     expect(fixtureServer).toContain('openclaw: ">=2026.4.11"');
+    expect(fixtureServer).toContain("/versions/${fixture.version}/artifact");
   });
 
   it("wires the full plugin prerelease plan into its release workflow", () => {
@@ -336,6 +344,7 @@ describe("scripts/lib/plugin-prerelease-test-plan.mjs", () => {
       "normal_ci",
       "plugin_prerelease",
       "release_checks",
+      "prepare_release_package",
       "npm_telegram",
       "summary",
     ]) {

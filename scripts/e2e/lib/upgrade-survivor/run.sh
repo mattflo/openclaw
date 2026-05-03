@@ -17,6 +17,7 @@ export OPENAI_API_KEY="sk-openclaw-upgrade-survivor"
 export DISCORD_BOT_TOKEN="upgrade-survivor-discord-token"
 export TELEGRAM_BOT_TOKEN="123456:upgrade-survivor-telegram-token"
 export FEISHU_APP_SECRET="upgrade-survivor-feishu-secret"
+export MATRIX_ACCESS_TOKEN="upgrade-survivor-matrix-token"
 
 ARTIFACT_ROOT="$(dirname "${OPENCLAW_UPGRADE_SURVIVOR_SUMMARY_JSON:-/tmp/openclaw-upgrade-survivor-artifacts/summary.json}")"
 mkdir -p "$ARTIFACT_ROOT"
@@ -67,10 +68,10 @@ rm -f "$SUMMARY_JSON" "$CONFIG_COVERAGE_JSON"
 
 validate_baseline_package_spec() {
   local spec="$1"
-  if [[ "$spec" =~ ^openclaw@(beta|latest|[0-9]{4}\.[1-9][0-9]*\.[1-9][0-9]*(-[1-9][0-9]*|-beta\.[1-9][0-9]*)?)$ ]]; then
+  if [[ "$spec" =~ ^openclaw@(alpha|beta|latest|[0-9]{4}\.[1-9][0-9]*\.[1-9][0-9]*(-[1-9][0-9]*|-(alpha|beta)\.[1-9][0-9]*)?)$ ]]; then
     return 0
   fi
-  echo "OPENCLAW_UPGRADE_SURVIVOR_BASELINE must be openclaw@latest, openclaw@beta, an exact OpenClaw release version, or a bare release version; got: $spec" >&2
+  echo "OPENCLAW_UPGRADE_SURVIVOR_BASELINE must be openclaw@latest, openclaw@beta, openclaw@alpha, an exact OpenClaw release version, or a bare release version; got: $spec" >&2
   return 1
 }
 
@@ -95,12 +96,12 @@ normalize_baseline() {
       ;;
   esac
   case "$baseline_version" in
-    latest | beta)
+    latest | beta | alpha)
       baseline_version=""
       baseline_version_expected="0"
       ;;
     dev | main | "")
-      echo "OPENCLAW_UPGRADE_SURVIVOR_BASELINE must be openclaw@latest, openclaw@beta, openclaw@<version>, or a bare version" >&2
+      echo "OPENCLAW_UPGRADE_SURVIVOR_BASELINE must be openclaw@latest, openclaw@beta, openclaw@alpha, openclaw@<version>, or a bare version" >&2
       return 1
       ;;
     *)
@@ -274,6 +275,10 @@ plugin_deps_cleanup_plugin_dirs() {
   printf '%s\n' \
     "$(package_root)/dist/extensions/$plugin" \
     "$(package_root)/extensions/$plugin"
+}
+
+configured_plugin_installs_enabled() {
+  [ "$SCENARIO" = "configured-plugin-installs" ]
 }
 
 legacy_plugin_dependency_probe_paths() {
@@ -652,7 +657,7 @@ start_gateway() {
 
 check_gateway_probes() {
   healthz_seconds="$(probe_gateway_endpoint /healthz live "$HEALTHZ_JSON")"
-  export OPENCLAW_UPGRADE_SURVIVOR_READYZ_ALLOW_FAILING="discord,telegram,whatsapp,feishu"
+  export OPENCLAW_UPGRADE_SURVIVOR_READYZ_ALLOW_FAILING="discord,telegram,whatsapp,feishu,matrix"
   readyz_seconds="$(probe_gateway_endpoint /readyz ready "$READYZ_JSON")"
   unset OPENCLAW_UPGRADE_SURVIVOR_READYZ_ALLOW_FAILING
 }

@@ -1708,19 +1708,18 @@ export type OpenClawPackageSetupFeatures = {
   legacySessionSurfaces?: boolean;
 };
 
-export type OpenClawPackageBundle = {
-  includeInCore?: boolean;
-};
-
 export type OpenClawPackageManifest = {
   extensions?: string[];
   runtimeExtensions?: string[];
   setupEntry?: string;
   runtimeSetupEntry?: string;
   setupFeatures?: OpenClawPackageSetupFeatures;
+  plugin?: {
+    id?: string;
+    label?: string;
+  };
   channel?: PluginPackageChannel;
   install?: PluginPackageInstall;
-  bundle?: OpenClawPackageBundle;
   startup?: OpenClawPackageStartup;
 };
 
@@ -1742,6 +1741,8 @@ export type PackageManifest = {
   name?: string;
   version?: string;
   description?: string;
+  dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
 } & Partial<Record<ManifestKey, OpenClawPackageManifest>>;
 
 export function getPackageManifestMetadata(
@@ -1751,12 +1752,6 @@ export function getPackageManifestMetadata(
     return undefined;
   }
   return manifest[MANIFEST_KEY];
-}
-
-export function isPackageIncludedInCoreBundle(
-  manifest: OpenClawPackageManifest | undefined,
-): boolean {
-  return manifest?.bundle?.includeInCore !== false;
 }
 
 export function resolvePackageExtensionEntries(

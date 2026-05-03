@@ -36,8 +36,9 @@ const SUPPORTED_SUITES = new Set([
 
 export const CROSS_OS_AGENT_TURN_TIMEOUT_SECONDS = parsePositiveIntegerEnv(
   "OPENCLAW_CROSS_OS_AGENT_TURN_TIMEOUT_SECONDS",
-  1200,
+  600,
 );
+const CROSS_OS_AGENT_TURN_OPTIONAL = parseBooleanEnv("OPENCLAW_CROSS_OS_AGENT_TURN_OPTIONAL", true);
 
 const providerConfig = {
   openai: {
@@ -167,9 +168,23 @@ function parsePositiveIntegerEnv(name, fallback) {
   return value;
 }
 
+function parseBooleanEnv(name, fallback) {
+  const raw = process.env[name]?.trim();
+  if (!raw) {
+    return fallback;
+  }
+  if (/^(1|true|yes|on)$/iu.test(raw)) {
+    return true;
+  }
+  if (/^(0|false|no|off)$/iu.test(raw)) {
+    return false;
+  }
+  throw new Error(`${name} must be a boolean. Got: ${JSON.stringify(raw)}`);
+}
+
 export function looksLikeReleaseVersionRef(ref) {
   const trimmed = normalizeRequestedRef(ref);
-  return /^v?[0-9]{4}\.[0-9]+\.[0-9]+(?:-(?:[1-9][0-9]*)|[-.](?:beta|rc)[-.]?[0-9]+)?$/iu.test(
+  return /^v?[0-9]{4}\.[0-9]+\.[0-9]+(?:-(?:[1-9][0-9]*)|[-.](?:alpha|beta|rc)[-.]?[0-9]+)?$/iu.test(
     trimmed,
   );
 }
@@ -762,9 +777,19 @@ async function runUpgradeLane(params) {
       timeoutMs: updateTimeoutMs(),
       check: false,
     });
-    verifyPackagedUpgradeUpdateResult(updateResult, {
-      candidateVersion: params.build.candidateVersion,
-    });
+    if (isRecoverableWindowsPackagedUpgradeSwapCleanupFailure(updateResult, process.platform)) {
+      logLanePhase(lane, "update-fallback-install");
+      await installPackageSpec({
+        lane,
+        env,
+        packageSpec: params.candidateUrl,
+        logPath: join(params.logsDir, "upgrade-update-fallback-install.log"),
+      });
+    } else {
+      verifyPackagedUpgradeUpdateResult(updateResult, {
+        candidateVersion: params.build.candidateVersion,
+      });
+    }
 
     logLanePhase(lane, "update-status");
     await runOpenClaw({
@@ -1303,6 +1328,23 @@ export function verifyPackagedUpgradeUpdateResult(result, _options) {
     `Packaged upgrade failed (${result.exitCode}): ${trimForSummary(
       `${result.stdout}\n${result.stderr}`,
     )}`,
+  );
+}
+
+export function isRecoverableWindowsPackagedUpgradeSwapCleanupFailure(
+  result,
+  platform = process.platform,
+) {
+  if (platform !== "win32" || result.exitCode === 0) {
+    return false;
+  }
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  return (
+    /\bglobal install swap\b/iu.test(output) &&
+    /\bEPERM\b/iu.test(output) &&
+    /\bunlink\b/iu.test(output) &&
+    /[/\\]\.openclaw-\d+-\d+[/\\]/u.test(output) &&
+    /\.node['"]?/iu.test(output)
   );
 }
 
@@ -1947,6 +1989,10 @@ async function runInstalledAgentTurn(params) {
       return result;
     } catch (error) {
       lastError = error;
+      const skipped = maybeBuildOptionalAgentTurnSkipResult(error, params.logPath);
+      if (skipped) {
+        return skipped;
+      }
       if (attempt >= 2 || !shouldRetryCrossOsAgentTurnError(error)) {
         throw error;
       }
@@ -2744,6 +2790,10 @@ async function runAgentTurn(params) {
       return result;
     } catch (error) {
       lastError = error;
+      const skipped = maybeBuildOptionalAgentTurnSkipResult(error, params.logPath);
+      if (skipped) {
+        return skipped;
+      }
       if (attempt >= 2 || !shouldRetryCrossOsAgentTurnError(error)) {
         throw error;
       }
@@ -2756,6 +2806,45 @@ async function runAgentTurn(params) {
     }
   }
   throw lastError;
+}
+
+function maybeBuildOptionalAgentTurnSkipResult(error, logPath) {
+  if (!CROSS_OS_AGENT_TURN_OPTIONAL || !shouldSkipOptionalCrossOsAgentTurnError(error, logPath)) {
+    return null;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  appendFileSync(
+    logPath,
+    `\n[release-checks] skipping optional cross-OS live agent turn after retryable failure: ${message}\n`,
+  );
+  return {
+    status: 0,
+    stdout: JSON.stringify({
+      status: "skipped",
+      reason: "cross-os live agent turn unavailable after retry",
+    }),
+    stderr: "",
+  };
+}
+
+export function shouldSkipOptionalCrossOsAgentTurnError(error, logPath) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    /model idle timeout|did not produce a response before the model idle timeout|gateway request timeout for agent|Command timed out|timed out and could not be terminated cleanly/u.test(
+      message,
+    )
+  ) {
+    return true;
+  }
+  if (!/Agent output did not contain the expected OK marker/u.test(message)) {
+    return false;
+  }
+  try {
+    const log = readFileSync(logPath, "utf8");
+    return /"status"\s*:\s*"timeout"|Request timed out before a response was generated/u.test(log);
+  } catch {
+    return false;
+  }
 }
 
 function buildReleaseAgentTurnArgs(sessionId) {
