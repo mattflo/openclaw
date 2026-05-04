@@ -40,7 +40,11 @@ import {
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { emitTrustedDiagnosticEvent } from "openclaw/plugin-sdk/diagnostic-runtime";
 import { handleCodexAppServerApprovalRequest } from "./approval-bridge.js";
-import { refreshCodexAppServerAuthTokens } from "./auth-bridge.js";
+import {
+  refreshCodexAppServerAuthTokens,
+  resolveCodexAppServerAuthProfileId,
+  resolveCodexAppServerAuthProfileIdForAgent,
+} from "./auth-bridge.js";
 import {
   createCodexAppServerClientFactoryTestHooks,
   defaultCodexAppServerClientFactory,
@@ -348,7 +352,8 @@ export async function runCodexAppServerAttempt(
   const appServer = resolveCodexAppServerRuntimeOptions({ pluginConfig });
   const resolvedWorkspace = resolveUserPath(params.workspaceDir);
   await fs.mkdir(resolvedWorkspace, { recursive: true });
-  const sandboxSessionKey = params.sessionKey?.trim() || params.sessionId;
+  const sandboxSessionKey =
+    params.sandboxSessionKey?.trim() || params.sessionKey?.trim() || params.sessionId;
   const sandbox = await resolveSandboxContext({
     config: params.config,
     sessionKey: sandboxSessionKey,
@@ -377,16 +382,31 @@ export async function runCodexAppServerAttempt(
     agentId: params.agentId,
   });
   const agentDir = params.agentDir ?? resolveOpenClawAgentDir();
-  const runtimeParams = { ...params, sessionKey: sandboxSessionKey };
+  const startupBinding = await readCodexAppServerBinding(params.sessionFile);
+  const startupAuthProfileCandidate =
+    params.runtimePlan?.auth.forwardedAuthProfileId ??
+    params.authProfileId ??
+    startupBinding?.authProfileId;
+  const startupAuthProfileId = params.authProfileStore
+    ? resolveCodexAppServerAuthProfileId({
+        authProfileId: startupAuthProfileCandidate,
+        store: params.authProfileStore,
+        config: params.config,
+      })
+    : resolveCodexAppServerAuthProfileIdForAgent({
+        authProfileId: startupAuthProfileCandidate,
+        agentDir,
+        config: params.config,
+      });
+  const runtimeParams = {
+    ...params,
+    sessionKey: sandboxSessionKey,
+    ...(startupAuthProfileId ? { authProfileId: startupAuthProfileId } : {}),
+  };
   const activeContextEngine = isActiveHarnessContextEngine(params.contextEngine)
     ? params.contextEngine
     : undefined;
   let yieldDetected = false;
-  const startupBinding = await readCodexAppServerBinding(params.sessionFile);
-  const startupAuthProfileId =
-    params.runtimePlan?.auth.forwardedAuthProfileId ??
-    params.authProfileId ??
-    startupBinding?.authProfileId;
   const tools = await buildDynamicTools({
     params,
     resolvedWorkspace,
@@ -405,6 +425,7 @@ export async function runCodexAppServerAttempt(
     signal: runAbortController.signal,
     hookContext: {
       agentId: sessionAgentId,
+      config: params.config,
       sessionId: params.sessionId,
       sessionKey: sandboxSessionKey,
       runId: params.runId,
@@ -515,6 +536,7 @@ export async function runCodexAppServerAttempt(
       agentId: sessionAgentId,
       sessionId: params.sessionId,
       sessionKey: sandboxSessionKey,
+      config: params.config,
       runId: params.runId,
       signal: runAbortController.signal,
     });
@@ -542,6 +564,7 @@ export async function runCodexAppServerAttempt(
             appServer.start,
             startupAuthProfileId,
             agentDir,
+            params.config,
           );
           attemptedClient = startupClient;
           startupClientForCleanup = startupClient;
@@ -553,7 +576,7 @@ export async function runCodexAppServerAttempt(
           });
           const startupThread = await startOrResumeThread({
             client: startupClient,
-            params,
+            params: runtimeParams,
             cwd: effectiveWorkspace,
             dynamicTools: toolBridge.specs,
             appServer,
@@ -1355,6 +1378,7 @@ function createCodexNativeHookRelay(params: {
   agentId: string | undefined;
   sessionId: string;
   sessionKey: string | undefined;
+  config: EmbeddedRunAttemptParams["config"];
   runId: string;
   signal: AbortSignal;
 }): NativeHookRelayRegistrationHandle | undefined {
@@ -1371,6 +1395,7 @@ function createCodexNativeHookRelay(params: {
     ...(params.agentId ? { agentId: params.agentId } : {}),
     sessionId: params.sessionId,
     ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+    ...(params.config ? { config: params.config } : {}),
     runId: params.runId,
     allowedEvents: params.options?.events ?? CODEX_NATIVE_HOOK_RELAY_EVENTS,
     ttlMs: params.options?.ttlMs,
@@ -1452,6 +1477,10 @@ async function buildDynamicTools(input: DynamicToolBuildParams) {
     senderIsOwner: params.senderIsOwner,
     allowGatewaySubagentBinding: params.allowGatewaySubagentBinding,
     sessionKey: input.sandboxSessionKey,
+    runSessionKey:
+      params.sessionKey && params.sessionKey !== input.sandboxSessionKey
+        ? params.sessionKey
+        : undefined,
     sessionId: params.sessionId,
     runId: params.runId,
     agentDir,
@@ -1812,6 +1841,7 @@ export const __testing = {
   CODEX_TURN_TERMINAL_IDLE_TIMEOUT_MS,
   buildCodexNativeHookRelayId,
   applyCodexDynamicToolProfile,
+  buildDynamicTools,
   filterToolsForVisionInputs,
   handleDynamicToolCallWithTimeout,
   ...createCodexAppServerClientFactoryTestHooks((factory) => {
