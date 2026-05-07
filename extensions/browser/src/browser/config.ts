@@ -486,6 +486,8 @@ export function resolveProfile(
       driver: "browserbase",
       browserbaseApiKey: apiKey,
       browserbaseProjectId: projectId,
+      headless: true,
+      headlessSource: "default",
       attachOnly: false,
     };
   }

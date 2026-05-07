@@ -107,10 +107,12 @@ export function createTestBrowserRouteContext(opts: { getState: () => BrowserSer
       }
       return profileState;
     };
+    const getCdpUrl = () => profile.cdpUrl;
     const tabOps = createProfileTabOps({
       profile,
       state: () => state,
       getProfileState,
+      getCdpUrl,
     });
     const selectionOps = createProfileSelectionOps({
       profile,
@@ -119,6 +121,7 @@ export function createTestBrowserRouteContext(opts: { getState: () => BrowserSer
       ensureBrowserAvailable: async () => {},
       listTabs: tabOps.listTabs,
       openTab: tabOps.openTab,
+      getCdpUrl,
     });
     return { profile, ...tabOps, ...selectionOps };
   };

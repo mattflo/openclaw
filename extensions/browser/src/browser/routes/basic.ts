@@ -96,11 +96,15 @@ async function buildBrowserStatus(req: BrowserRequest, ctx: BrowserRouteContext)
     current.resolved,
     profileCtx.profile,
   );
+  const runningChrome =
+    profileState?.running && !isBrowserBaseRunning(profileState.running)
+      ? profileState.running
+      : null;
   const headlessMode =
-    typeof profileState?.running?.headless === "boolean"
+    runningChrome && typeof runningChrome.headless === "boolean"
       ? {
-          headless: profileState.running.headless,
-          source: profileState.running.headlessSource ?? configuredHeadlessMode.source,
+          headless: runningChrome.headless,
+          source: runningChrome.headlessSource ?? configuredHeadlessMode.source,
         }
       : configuredHeadlessMode;
 
