@@ -96,9 +96,23 @@ describe("buildAgentSystemPrompt", () => {
     const tokenA = lineA?.match(/[a-f0-9]{12}/)?.[0];
     const tokenB = lineB?.match(/[a-f0-9]{12}/)?.[0];
 
-    expect(tokenA).toBeDefined();
-    expect(tokenB).toBeDefined();
+    expect(tokenA).toMatch(/^[a-f0-9]{12}$/);
+    expect(tokenB).toMatch(/^[a-f0-9]{12}$/);
     expect(tokenA).not.toBe(tokenB);
+  });
+
+  it("injects the current model identity into the runtime prompt", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      runtimeInfo: {
+        agentId: "main",
+        model: "openai/gpt-5.5",
+      },
+    });
+
+    expect(prompt).toContain(
+      "Current model identity: openai/gpt-5.5. If asked what model you are, answer with this value for the current run.",
+    );
   });
 
   it("omits extended sections in minimal prompt mode", () => {
@@ -1110,8 +1124,8 @@ describe("buildAgentBootstrapSystemContext", () => {
   });
 
   it("returns nothing when bootstrap is not pending", () => {
-    expect(buildAgentBootstrapSystemContext({ bootstrapMode: "none" })).toEqual([]);
-    expect(buildAgentBootstrapSystemContext({})).toEqual([]);
+    expect(buildAgentBootstrapSystemContext({ bootstrapMode: "none" })).toStrictEqual([]);
+    expect(buildAgentBootstrapSystemContext({})).toStrictEqual([]);
   });
 });
 

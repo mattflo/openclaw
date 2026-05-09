@@ -85,7 +85,7 @@ describe("resolveChannelSetupSelectionContributions", () => {
     vi.clearAllMocks();
     listChatChannels.mockReturnValue([
       makeMeta("discord", "Discord"),
-      makeMeta("bluebubbles", "BlueBubbles"),
+      makeMeta("imessage", "iMessage"),
     ]);
     resolveChannelSetupEntries.mockReturnValue(makeChannelSetupEntries());
     formatChannelPrimerLine.mockImplementation(
@@ -121,11 +121,11 @@ describe("resolveChannelSetupSelectionContributions", () => {
           },
         },
         {
-          id: "bluebubbles",
+          id: "imessage",
           meta: {
-            id: "bluebubbles",
-            label: "BlueBubbles",
-            selectionLabel: "BlueBubbles (macOS app)",
+            id: "imessage",
+            label: "iMessage",
+            selectionLabel: "iMessage (macOS app)",
           },
         },
       ],
@@ -134,8 +134,8 @@ describe("resolveChannelSetupSelectionContributions", () => {
     });
 
     expect(contributions.map((contribution) => contribution.option.label)).toEqual([
-      "BlueBubbles (macOS app)",
       "Discord (Bot API)",
+      "iMessage (macOS app)",
       "Zalo (Bot API)",
     ]);
   });
@@ -307,16 +307,19 @@ describe("resolveChannelSetupSelectionContributions", () => {
       selection: ["zalo"],
     });
 
-    expect(formatChannelSelectionLine).toHaveBeenCalledWith(
-      expect.objectContaining({
-        label: "Zalo\\nBot",
-        blurb: "Setup\\nhelp",
-        docsLabel: "Docs\\nLabel",
-        selectionDocsPrefix: "Docs\\nPrefix",
-        selectionExtras: ["Extra\\nOne"],
-      }),
-      expect.any(Function),
-    );
+    expect(formatChannelSelectionLine).toHaveBeenCalledOnce();
+    const [selectionMeta, docsLink] = formatChannelSelectionLine.mock.calls[0] ?? [];
+    expect(selectionMeta).toMatchObject({
+      label: "Zalo\\nBot",
+      blurb: "Setup\\nhelp",
+      docsLabel: "Docs\\nLabel",
+      selectionDocsPrefix: "Docs\\nPrefix",
+      selectionExtras: ["Extra\\nOne"],
+    });
+    if (typeof docsLink !== "function") {
+      throw new Error("Expected docs link formatter");
+    }
+    expect(docsLink("/channels/zalo", "Docs")).toContain("https://docs.openclaw.ai/channels/zalo");
     expect(lines).toEqual(["Zalo\\nBot — Setup\\nhelp"]);
   });
 });

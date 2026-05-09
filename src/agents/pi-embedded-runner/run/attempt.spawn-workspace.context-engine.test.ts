@@ -621,7 +621,7 @@ describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
 
     expect(sessionPrompt).not.toHaveBeenCalled();
     expect(result.finalPromptText).toBeUndefined();
-    expect(result.promptError).toBeFalsy();
+    expect(result.promptError).toBeNull();
     expect(result.messagesSnapshot).toEqual([
       expect.objectContaining({ role: "user", content: "seed" }),
     ]);
@@ -811,7 +811,7 @@ describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
 
     expect(seen.prompt).toBe("hello");
     expect(seen.prompt).not.toContain("[Inter-session message]");
-    expect(seen.messages).toEqual([]);
+    expect(seen.messages).toStrictEqual([]);
     expect(seen.systemPrompt ?? "").toBe("");
     expect(result.finalPromptText).toBe("hello");
     expect(result.systemPromptReport?.systemPrompt ?? "").toBe("");
@@ -966,7 +966,7 @@ describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
     ).toBe(true);
   });
 
-  it("forwards silentExpected to the embedded subscription", async () => {
+  it("forwards silentExpected to the embedded subscription", () => {
     const params = buildEmbeddedSubscriptionParams({
       session: {} as never,
       runId: "run-context-engine-forwarding",
@@ -1233,8 +1233,6 @@ describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
       flushPendingToolResultsAfterIdle: flushMock,
       session: { agent: {}, dispose: disposeMock },
       sessionManager: hoisted.sessionManager,
-      releaseWsSession: hoisted.releaseWsSessionMock,
-      sessionId: embeddedSessionId,
       bundleLspRuntime: undefined,
       sessionLock: { release: releaseMock },
     });
@@ -1242,9 +1240,6 @@ describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
     expect(flushMock).toHaveBeenCalledTimes(1);
     expect(disposeMock).toHaveBeenCalledTimes(1);
     expect(releaseMock).toHaveBeenCalledTimes(1);
-    expect(hoisted.releaseWsSessionMock).toHaveBeenCalledWith("embedded-session", {
-      allowPool: false,
-    });
   });
 });
 

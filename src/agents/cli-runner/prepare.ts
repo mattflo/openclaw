@@ -43,6 +43,7 @@ import { applyPluginTextReplacements } from "../plugin-text-transforms.js";
 import { resolveSkillsPromptForRun } from "../skills.js";
 import { resolveSystemPromptOverride } from "../system-prompt-override.js";
 import { buildSystemPromptReport } from "../system-prompt-report.js";
+import { appendModelIdentitySystemPrompt } from "../system-prompt.js";
 import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js";
 import { prepareCliBundleMcpConfig } from "./bundle-mcp.js";
 import { buildSystemPrompt, normalizeCliModel } from "./helpers.js";
@@ -112,6 +113,11 @@ export async function prepareCliRunContext(
   });
   if (!backendResolved) {
     throw new Error(`Unknown CLI backend: ${params.provider}`);
+  }
+  if (params.toolsAllow !== undefined) {
+    throw new Error(
+      `CLI backend ${backendResolved.id} cannot enforce runtime toolsAllow; use an embedded runtime for restricted tool policy`,
+    );
   }
   if (params.disableTools === true && backendResolved.nativeToolMode === "always-on") {
     throw new Error(
@@ -412,7 +418,10 @@ export async function prepareCliRunContext(
         }),
         prompt: preparedPrompt,
       });
-  systemPrompt = applyPluginTextReplacements(systemPrompt, backendResolved.textTransforms?.input);
+  systemPrompt = appendModelIdentitySystemPrompt({
+    systemPrompt: applyPluginTextReplacements(systemPrompt, backendResolved.textTransforms?.input),
+    model: modelDisplay,
+  });
   const systemPromptReport = buildSystemPromptReport({
     source: "run",
     generatedAt: Date.now(),

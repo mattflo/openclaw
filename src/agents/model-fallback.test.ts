@@ -131,9 +131,19 @@ const authRuntimeMock = vi.hoisted(() => {
             continue;
           }
           const stats = store.usageStats?.[profileId];
-          const expiry = [stats?.cooldownUntil, stats?.disabledUntil]
-            .filter((value): value is number => isActive(value, ts))
-            .toSorted((a, b) => a - b)[0];
+          const cooldownUntil = stats?.cooldownUntil;
+          const disabledUntil = stats?.disabledUntil;
+          let expiry: number | undefined;
+          if (isActive(cooldownUntil, ts)) {
+            expiry = cooldownUntil;
+          }
+          if (
+            disabledUntil !== undefined &&
+            isActive(disabledUntil, ts) &&
+            (expiry === undefined || disabledUntil < expiry)
+          ) {
+            expiry = disabledUntil;
+          }
           if (expiry !== undefined && (soonest === null || expiry < soonest)) {
             soonest = expiry;
           }
@@ -671,7 +681,7 @@ describe("runWithModelFallback", () => {
 
     expect(result.result).toEqual({ payloads: [{ text: "ok" }] });
     expect(run).toHaveBeenCalledTimes(1);
-    expect(result.attempts).toEqual([]);
+    expect(result.attempts).toStrictEqual([]);
   });
 
   it("keeps tool-executing empty GPT-5 runs out of fallback", () => {
@@ -923,7 +933,7 @@ describe("runWithModelFallback", () => {
     expect(result.result).toBe("ok");
     expect(result.provider).toBe("anthropic");
     expect(result.model).toBe("claude-sonnet-4-6");
-    expect(result.attempts).toEqual([]);
+    expect(result.attempts).toStrictEqual([]);
     expect(onError).not.toHaveBeenCalled();
     expect(run.mock.calls).toEqual([
       ["openai", "gpt-4.1-mini"],
@@ -1103,6 +1113,14 @@ describe("runWithModelFallback", () => {
         error: new Error("Model not found: openai/gpt-6"),
         expectedFallback: ["anthropic", "claude-haiku-3-5"],
       },
+      {
+        name: "bare stream read transport error",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        error: new Error("stream_read_error"),
+        expectedFallback: ["anthropic", "claude-haiku-3-5"],
+        expectedReason: "timeout",
+      },
     ];
 
     for (const testCase of cases) {
@@ -1220,7 +1238,7 @@ describe("runWithModelFallback", () => {
     expect(result.result).toBe("ok");
     expect(run).toHaveBeenCalledTimes(1);
     expect(run.mock.calls[0]?.[0]).toBe("openrouter");
-    expect(result.attempts).toEqual([]);
+    expect(result.attempts).toStrictEqual([]);
   });
 
   it("propagates disabled reason when all profiles are unavailable", async () => {
@@ -1279,7 +1297,7 @@ describe("runWithModelFallback", () => {
 
     expect(result.result).toBe("ok");
     expect(run.mock.calls).toEqual([[provider, "m1"]]);
-    expect(result.attempts).toEqual([]);
+    expect(result.attempts).toStrictEqual([]);
   });
 
   it("does not append configured primary when fallbacksOverride is set", () => {
@@ -1416,7 +1434,7 @@ describe("runWithModelFallback", () => {
     });
   });
 
-  it("uses fallbacksOverride instead of agents.defaults.model.fallbacks", async () => {
+  it("uses fallbacksOverride instead of agents.defaults.model.fallbacks", () => {
     const cfg = makeFallbacksOnlyCfg();
 
     const candidates = __testing.resolveFallbackCandidates({
@@ -1432,7 +1450,7 @@ describe("runWithModelFallback", () => {
     ]);
   });
 
-  it("treats an empty fallbacksOverride as disabling global fallbacks", async () => {
+  it("treats an empty fallbacksOverride as disabling global fallbacks", () => {
     const cfg = makeFallbacksOnlyCfg();
 
     const candidates = __testing.resolveFallbackCandidates({
@@ -1445,7 +1463,7 @@ describe("runWithModelFallback", () => {
     expect(candidates).toEqual([{ provider: "anthropic", model: "claude-opus-4-5" }]);
   });
 
-  it("keeps explicit fallbacks reachable when models allowlist is present", async () => {
+  it("keeps explicit fallbacks reachable when models allowlist is present", () => {
     const cfg = makeCfg({
       agents: {
         defaults: {
@@ -1472,7 +1490,7 @@ describe("runWithModelFallback", () => {
     ]);
   });
 
-  it("defaults provider/model when missing (regression #946)", async () => {
+  it("defaults provider/model when missing (regression #946)", () => {
     const cfg = makeCfg({
       agents: {
         defaults: {
@@ -1671,6 +1689,13 @@ describe("runWithModelFallback", () => {
       setAuthRuntimeStore(tmpDir, store);
       return { dir: tmpDir };
     }
+
+    it("maps non-quota cooldown suspensions to circuit-open session state", () => {
+      expect(__testing.resolveSessionSuspensionReason("rate_limit")).toBe("quota_exhausted");
+      expect(__testing.resolveSessionSuspensionReason("overloaded")).toBe("circuit_open");
+      expect(__testing.resolveSessionSuspensionReason("timeout")).toBe("circuit_open");
+      expect(__testing.resolveSessionSuspensionReason("billing")).toBe("manual");
+    });
 
     it("attempts same-provider fallbacks during transient cooldowns", async () => {
       const { dir } = await makeAuthStoreWithCooldown("anthropic", "timeout");

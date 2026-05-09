@@ -273,7 +273,9 @@ describe("shouldSkipLocalCliCredentialEpoch", () => {
       });
 
       expect(context.params.prompt).toBe("history:2\n\nlatest ask");
-      expect(context.systemPrompt).toBe("prepend system\n\nhook system\n\nappend system");
+      expect(context.systemPrompt).toBe(
+        "prepend system\n\nhook system\n\nappend system\n\nCurrent model identity: test-cli/test-model. If asked what model you are, answer with this value for the current run.",
+      );
       expect(hookRunner.runBeforePromptBuild).toHaveBeenCalledWith(
         {
           prompt: "latest ask",
@@ -441,7 +443,7 @@ describe("shouldSkipLocalCliCredentialEpoch", () => {
 
       expect(context.params.prompt).toBe("prompt prepend\n\nlegacy prepend\n\nlatest ask");
       expect(context.systemPrompt).toBe(
-        "prompt prepend system\n\nlegacy prepend system\n\nprompt system\n\nprompt append system\n\nlegacy append system",
+        "prompt prepend system\n\nlegacy prepend system\n\nprompt system\n\nprompt append system\n\nlegacy append system\n\nCurrent model identity: test-cli/test-model. If asked what model you are, answer with this value for the current run.",
       );
       expect(hookRunner.runBeforePromptBuild).toHaveBeenCalledOnce();
       expect(hookRunner.runBeforeAgentStart).toHaveBeenCalledOnce();
@@ -475,7 +477,9 @@ describe("shouldSkipLocalCliCredentialEpoch", () => {
       });
 
       expect(context.params.prompt).toBe("latest ask");
-      expect(context.systemPrompt).toBe("base extra system");
+      expect(context.systemPrompt).toBe(
+        "base extra system\n\nCurrent model identity: test-cli/test-model. If asked what model you are, answer with this value for the current run.",
+      );
       expect(context.systemPrompt).not.toContain("hook exploded");
       expect(hookRunner.runBeforePromptBuild).toHaveBeenCalledOnce();
     } finally {
@@ -570,7 +574,9 @@ describe("shouldSkipLocalCliCredentialEpoch", () => {
         config: createCliBackendConfig(),
       });
 
-      expect(context.systemPrompt).toBe("active video task\n\nhook prepend system\n\nhook system");
+      expect(context.systemPrompt).toBe(
+        "active video task\n\nhook prepend system\n\nhook system\n\nCurrent model identity: test-cli/test-model. If asked what model you are, answer with this value for the current run.",
+      );
       expect(mockBuildActiveVideoGenerationTaskPromptContextForSession).toHaveBeenCalledWith(
         "agent:main:test",
       );
@@ -614,6 +620,41 @@ describe("shouldSkipLocalCliCredentialEpoch", () => {
       expect(context.preparedBackend.mcpConfigHash).toBeUndefined();
       expect(context.preparedBackend.env).toBeUndefined();
       expect(context.preparedBackend.backend.args).toEqual(["--print"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when a runtime toolsAllow is requested for CLI backends", async () => {
+    const { dir, sessionFile } = createSessionFile();
+    try {
+      const getActiveMcpLoopbackRuntime = vi.fn(() => ({
+        port: 31783,
+        ownerToken: "owner-token",
+        nonOwnerToken: "non-owner-token",
+      }));
+      setCliRunnerPrepareTestDeps({
+        getActiveMcpLoopbackRuntime,
+      });
+
+      await expect(
+        prepareCliRunContext({
+          sessionId: "session-test",
+          sessionFile,
+          workspaceDir: dir,
+          prompt: "latest ask",
+          provider: "test-cli",
+          model: "test-model",
+          timeoutMs: 1_000,
+          runId: "run-test-tools-allow",
+          config: createCliBackendConfig({ bundleMcp: true }),
+          toolsAllow: ["read", "web_search"],
+        }),
+      ).rejects.toThrow(
+        "CLI backend test-cli cannot enforce runtime toolsAllow; use an embedded runtime for restricted tool policy",
+      );
+
+      expect(getActiveMcpLoopbackRuntime).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

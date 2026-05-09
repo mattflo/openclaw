@@ -142,12 +142,10 @@ import { buildEmbeddedMessageActionDiscoveryInput } from "./message-action-disco
 import { readPiModelContextTokens } from "./model-context-tokens.js";
 import { buildModelAliasLines, resolveModelAsync } from "./model.js";
 import { sanitizeSessionHistory, validateReplayTurns } from "./replay-history.js";
-import { shouldUseOpenAIWebSocketTransport } from "./run/attempt.thread-helpers.js";
 import { buildEmbeddedSandboxInfo } from "./sandbox-info.js";
 import { prewarmSessionFile, trackSessionManagerAccess } from "./session-manager-cache.js";
 import { resolveEmbeddedRunSkillEntries } from "./skills-runtime.js";
 import {
-  resolveEmbeddedAgentApiKey,
   resolveEmbeddedAgentBaseStreamFn,
   resolveEmbeddedAgentStreamFn,
 } from "./stream-resolution.js";
@@ -183,8 +181,6 @@ function createCompactionDiagId(): string {
 function prepareCompactionSessionAgent(params: {
   session: { agent: { streamFn?: unknown } };
   providerStreamFn: unknown;
-  shouldUseWebSocketTransport: boolean;
-  wsApiKey?: string;
   sessionId: string;
   signal: AbortSignal;
   effectiveModel: ProviderRuntimeModel;
@@ -202,8 +198,6 @@ function prepareCompactionSessionAgent(params: {
   params.session.agent.streamFn = resolveEmbeddedAgentStreamFn({
     currentStreamFn: resolveEmbeddedAgentBaseStreamFn({ session: params.session as never }),
     providerStreamFn: params.providerStreamFn as never,
-    shouldUseWebSocketTransport: params.shouldUseWebSocketTransport,
-    wsApiKey: params.wsApiKey,
     sessionId: params.sessionId,
     signal: params.signal,
     model: params.effectiveModel,
@@ -323,8 +317,32 @@ function summarizeCompactionMessages(messages: AgentMessage[]): CompactionMessag
     historyTextChars,
     toolResultChars,
     estTokens: tokenEstimationFailed ? undefined : estTokens,
-    contributors: contributors.toSorted((a, b) => b.chars - a.chars).slice(0, 3),
+    contributors: selectTopContributors(contributors),
   };
+}
+
+function selectTopContributors(
+  contributors: CompactionMessageMetrics["contributors"],
+): CompactionMessageMetrics["contributors"] {
+  const selected: CompactionMessageMetrics["contributors"] = [];
+  for (const contributor of contributors) {
+    let insertAt = selected.length;
+    for (let index = 0; index < selected.length; index += 1) {
+      if (contributor.chars > selected[index].chars) {
+        insertAt = index;
+        break;
+      }
+    }
+    if (insertAt < 3) {
+      selected.splice(insertAt, 0, contributor);
+      if (selected.length > 3) {
+        selected.pop();
+      }
+    } else if (selected.length < 3) {
+      selected.push(contributor);
+    }
+  }
+  return selected;
 }
 
 function containsRealConversationMessages(messages: AgentMessage[]): boolean {
@@ -697,6 +715,7 @@ async function compactEmbeddedPiSessionDirectOnce(
       workspaceDir: effectiveWorkspace,
       config: params.config,
       abortSignal: runAbortController.signal,
+      sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
       modelProvider: model.provider,
       modelId,
       modelCompat: extractModelCompat(effectiveModel),
@@ -1022,23 +1041,6 @@ async function compactEmbeddedPiSessionDirectOnce(
         agentDir,
         effectiveWorkspace,
       });
-      const shouldUseWebSocketTransport = shouldUseOpenAIWebSocketTransport({
-        provider,
-        modelApi: effectiveModel.api,
-        modelBaseUrl: effectiveModel.baseUrl,
-      });
-      const wsApiKey = shouldUseWebSocketTransport
-        ? await resolveEmbeddedAgentApiKey({
-            provider,
-            resolvedApiKey: hasRuntimeAuthExchange ? undefined : apiKeyInfo?.apiKey,
-            authStorage,
-          })
-        : undefined;
-      if (shouldUseWebSocketTransport && !wsApiKey) {
-        log.warn(
-          `[ws-stream] no API key for provider=${provider}; keeping compaction HTTP transport`,
-        );
-      }
       while (true) {
         // Rebuild the compaction session on retry so provider wrappers, payload
         // shaping, and the embedded system prompt all reflect the fallback level.
@@ -1066,8 +1068,6 @@ async function compactEmbeddedPiSessionDirectOnce(
           prepareCompactionSessionAgent({
             session,
             providerStreamFn,
-            shouldUseWebSocketTransport,
-            wsApiKey,
             sessionId: params.sessionId,
             signal: runAbortController.signal,
             effectiveModel,
