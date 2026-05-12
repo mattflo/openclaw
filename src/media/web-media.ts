@@ -123,12 +123,13 @@ const HOST_READ_ALLOWED_DOCUMENT_MIMES = new Set([
   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/calendar",
   "text/csv",
   "text/markdown",
 ]);
 // file-type returns undefined (no magic bytes) for plain-text formats like CSV and
 // Markdown, so host-read needs an explicit "this really decodes as text" fallback.
-const HOST_READ_TEXT_PLAIN_ALIASES = new Set(["text/csv", "text/markdown"]);
+const HOST_READ_TEXT_PLAIN_ALIASES = new Set(["text/calendar", "text/csv", "text/markdown"]);
 const MB = 1024 * 1024;
 
 function getTextStats(text: string): { printableRatio: number } {
@@ -270,7 +271,7 @@ function assertHostReadMediaAllowed(params: {
     }
     throw new LocalMediaAccessError(
       "path-not-allowed",
-      "hostReadCapability permits only validated plain-text CSV/Markdown documents for local reads",
+      "hostReadCapability permits only validated plain-text Calendar/CSV/Markdown documents for local reads",
     );
   }
   const sniffedKind = kindFromMime(params.sniffedContentType);
