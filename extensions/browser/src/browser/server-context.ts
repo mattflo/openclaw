@@ -3,6 +3,7 @@ import {
   resolveCdpReachabilityPolicy,
 } from "./cdp-reachability-policy.js";
 import { usesFastLoopbackCdpProbeClass } from "./cdp-timeouts.js";
+import { redactCdpUrl } from "./cdp.helpers.js";
 import { listChromeMcpTabs } from "./chrome-mcp.js";
 import { isChromeReachable, resolveOpenClawUserDataDir } from "./chrome.js";
 import type { ResolvedBrowserProfile } from "./config.js";
@@ -247,7 +248,7 @@ export function createBrowserRouteContext(opts: ContextOptions): BrowserRouteCon
         name,
         transport: capabilities.usesChromeMcp ? "chrome-mcp" : "cdp",
         cdpPort: capabilities.usesChromeMcp ? null : profile.cdpPort,
-        cdpUrl: capabilities.usesChromeMcp ? null : effectiveCdpUrl,
+        cdpUrl: capabilities.usesChromeMcp ? null : (redactCdpUrl(effectiveCdpUrl) ?? null),
         color: profile.color,
         driver: profile.driver,
         running,
@@ -282,7 +283,7 @@ export function createBrowserRouteContext(opts: ContextOptions): BrowserRouteCon
     ensureTabAvailable: (targetId) => getDefaultContext().ensureTabAvailable(targetId),
     isHttpReachable: (timeoutMs) => getDefaultContext().isHttpReachable(timeoutMs),
     isTransportAvailable: (timeoutMs) => getDefaultContext().isTransportAvailable(timeoutMs),
-    isReachable: (timeoutMs) => getDefaultContext().isReachable(timeoutMs),
+    isReachable: (timeoutMs, options) => getDefaultContext().isReachable(timeoutMs, options),
     listTabs: () => getDefaultContext().listTabs(),
     openTab: (url, opts) => getDefaultContext().openTab(url, opts),
     labelTab: (targetId, label) => getDefaultContext().labelTab(targetId, label),

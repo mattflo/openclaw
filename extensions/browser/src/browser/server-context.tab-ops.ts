@@ -1,5 +1,6 @@
 import { resolveBrowserNavigationProxyMode } from "./browser-proxy-mode.js";
 import { resolveCdpControlPolicy } from "./cdp-reachability-policy.js";
+import { isSelectableCdpBrowserTarget } from "./cdp-target-filter.js";
 import { CDP_JSON_NEW_TIMEOUT_MS } from "./cdp-timeouts.js";
 import {
   assertCdpEndpointAllowed,
@@ -211,7 +212,7 @@ export function createProfileTabOps({
         const cdpUrl = getCdpUrl();
         await assertCdpEndpointAllowed(cdpUrl, ssrfPolicy);
         const pages = await listPagesViaPlaywright({ cdpUrl, ssrfPolicy });
-        return pages.map((p) => ({
+        return pages.filter(isSelectableCdpBrowserTarget).map((p) => ({
           targetId: p.targetId,
           title: p.title,
           url: p.url,
@@ -237,7 +238,7 @@ export function createProfileTabOps({
         wsUrl: normalizeWsUrl(t.webSocketDebuggerUrl, getCdpUrl()),
         type: t.type,
       }))
-      .filter((t) => Boolean(t.targetId));
+      .filter((t) => Boolean(t.targetId) && isSelectableCdpBrowserTarget(t));
   };
 
   const listTabs = async (): Promise<BrowserTab[]> => {
