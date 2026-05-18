@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import {
   calculateCost,
@@ -66,6 +66,7 @@ import {
   buildGuardedModelFetch,
   resolveModelRequestTimeoutMs,
 } from "./provider-transport-fetch.js";
+import { sanitizeResponsesImagePayload } from "./responses-image-payload-sanitizer.js";
 import { stripSystemPromptCacheBoundary } from "./system-prompt-cache-boundary.js";
 import { transformTransportMessages } from "./transport-message-transform.js";
 import { mergeTransportMetadata, sanitizeTransportPayloadText } from "./transport-stream-shared.js";
@@ -125,7 +126,7 @@ function createModelStreamCooperativeScheduler(
       eventsSinceYield = 0;
       lastYieldedAt = now;
       await new Promise<void>((resolve) => {
-        setImmediate(resolve);
+        setTimeout(resolve, 0);
       });
       throwIfModelStreamAborted(signal);
     },
@@ -721,11 +722,7 @@ export function resolveAzureOpenAIApiVersion(env = process.env): string {
 }
 
 function shortHash(value: string): string {
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = (hash * 31 + value.charCodeAt(i)) | 0;
-  }
-  return Math.abs(hash).toString(36);
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
 function encodeTextSignatureV1(id: string, phase?: "commentary" | "final_answer"): string {
@@ -767,14 +764,21 @@ function convertResponsesMessages(
   const messages: ResponseInput = [];
   const shouldReplayReasoningItems = options?.replayReasoningItems ?? true;
   const shouldReplayResponsesItemIds = options?.replayResponsesItemIds ?? true;
+  const shouldNormalizeSameModelToolCallIds = model.provider === "github-copilot";
+  const sanitizeIdPart = (part: string) => part.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+$/, "");
   const normalizeIdPart = (part: string) => {
-    const sanitized = part.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const sanitized = sanitizeIdPart(part);
     const normalized = sanitized.length > 64 ? sanitized.slice(0, 64) : sanitized;
     return normalized.replace(/_+$/, "");
   };
   const buildForeignResponsesItemId = (itemId: string) => {
     const normalized = `fc_${shortHash(itemId)}`;
     return normalized.length > 64 ? normalized.slice(0, 64) : normalized;
+  };
+  const buildSameProviderCopilotResponsesItemId = (itemId: string) => {
+    const sanitized = sanitizeIdPart(itemId);
+    const candidate = sanitized.startsWith("fc_") ? sanitized : `fc_${sanitized}`;
+    return candidate.length > 64 ? buildForeignResponsesItemId(itemId) : candidate;
   };
   const normalizeToolCallId = (
     id: string,
@@ -792,7 +796,9 @@ function convertResponsesMessages(
     const isForeignToolCall = source.provider !== model.provider || source.api !== model.api;
     let normalizedItemId = isForeignToolCall
       ? buildForeignResponsesItemId(itemId)
-      : normalizeIdPart(itemId);
+      : model.provider === "github-copilot"
+        ? buildSameProviderCopilotResponsesItemId(itemId)
+        : normalizeIdPart(itemId);
     if (!normalizedItemId.startsWith("fc_")) {
       normalizedItemId = normalizeIdPart(`fc_${normalizedItemId}`);
     }
@@ -802,6 +808,7 @@ function convertResponsesMessages(
     context.messages,
     model,
     normalizeToolCallId,
+    { normalizeSameModelToolCallIds: shouldNormalizeSameModelToolCallIds },
   );
   const includeSystemPrompt = options?.includeSystemPrompt ?? true;
   if (includeSystemPrompt && context.systemPrompt) {
@@ -840,7 +847,16 @@ function convertResponsesMessages(
         msg.model !== model.id && msg.provider === model.provider && msg.api === model.api;
       for (const block of msg.content) {
         if (block.type === "thinking") {
-          if (shouldReplayReasoningItems && block.thinkingSignature) {
+          if (
+            shouldReplayReasoningItems &&
+            block.thinkingSignature &&
+            block.thinkingSignature.startsWith("{")
+          ) {
+            // openai-completions plain-text reasoning paths persist a
+            // provenance tag (e.g. "reasoning", "reasoning_details", "content")
+            // as thinkingSignature rather than a JSON-encoded reasoning item.
+            // Replaying those values would corrupt the next request payload
+            // (OpenRouter returns HTTP 500), so skip non-JSON signatures.
             const reasoningItem = JSON.parse(
               block.thinkingSignature,
             ) as ReplayableResponseReasoningItem;
@@ -934,8 +950,8 @@ function convertResponsesTools(
     transport: "responses",
     model,
   });
-  return tools.map((tool): FunctionTool => {
-    const base = {
+  return sortTransportToolsByName(tools).map((tool): FunctionTool => {
+    const result = {
       type: "function" as const,
       name: tool.name,
       description: tool.description,
@@ -944,8 +960,11 @@ function convertResponsesTools(
         strict === true,
         model.compat,
       ) as Record<string, unknown>,
-    };
-    return strict === undefined ? (base as FunctionTool) : { ...base, strict };
+    } as FunctionTool;
+    if (strict !== undefined) {
+      result.strict = strict;
+    }
+    return result;
   });
 }
 
@@ -1435,6 +1454,7 @@ export function createOpenAIResponsesTransportStreamFn(): StreamFn {
           model,
           params as Record<string, unknown>,
         ) as typeof params;
+        params = sanitizeResponsesImagePayload(params as Record<string, unknown>) as typeof params;
         if (
           (options as { openclawCodeModeToolSurface?: unknown } | undefined)
             ?.openclawCodeModeToolSurface === true
@@ -1683,7 +1703,7 @@ export function buildOpenAIResponsesParams(
   const messages = convertResponsesMessages(
     model,
     context,
-    new Set(["openai", "openai-codex", "opencode", "azure-openai-responses"]),
+    new Set(["openai", "openai-codex", "opencode", "azure-openai-responses", "github-copilot"]),
     {
       includeSystemPrompt: !isCodexResponses,
       supportsDeveloperRole,
@@ -1834,6 +1854,7 @@ export function createAzureOpenAIResponsesTransportStreamFn(): StreamFn {
           model,
           params as Record<string, unknown>,
         ) as typeof params;
+        params = sanitizeResponsesImagePayload(params as Record<string, unknown>) as typeof params;
         if (
           (options as { openclawCodeModeToolSurface?: unknown } | undefined)
             ?.openclawCodeModeToolSurface === true
@@ -2637,6 +2658,21 @@ function applyQwenOpenAICompletionsThinkingParams(params: {
   return true;
 }
 
+function applyTogetherOpenAICompletionsThinkingParams(params: {
+  compatThinkingFormat: string;
+  modelReasoning: boolean;
+  payload: Record<string, unknown>;
+  requestedEffort: OpenAIReasoningEffort;
+}): boolean {
+  if (!params.modelReasoning || params.compatThinkingFormat !== "together") {
+    return false;
+  }
+  params.payload.reasoning = {
+    enabled: isOpenAICompletionsThinkingEnabled(params.requestedEffort),
+  };
+  return true;
+}
+
 function convertTools(
   tools: NonNullable<Context["tools"]>,
   compat: ReturnType<typeof getCompat>,
@@ -2653,9 +2689,13 @@ function convertTools(
       model,
     },
   );
-  return tools.map((tool) => ({
-    type: "function",
-    function: {
+  return sortTransportToolsByName(tools).map((tool) => {
+    const functionTool: {
+      name: string;
+      description: string | undefined;
+      parameters: ReturnType<typeof normalizeOpenAIStrictToolParameters>;
+      strict?: boolean;
+    } = {
       name: tool.name,
       description: tool.description,
       parameters: normalizeOpenAIStrictToolParameters(
@@ -2663,9 +2703,37 @@ function convertTools(
         strict === true,
         model.compat,
       ),
-      ...(strict === undefined ? {} : { strict }),
-    },
-  }));
+    };
+    if (strict !== undefined) {
+      functionTool.strict = strict;
+    }
+    return {
+      type: "function",
+      function: functionTool,
+    };
+  });
+}
+
+function compareTransportToolText(left: string | undefined, right: string | undefined): number {
+  const leftText = left ?? "";
+  const rightText = right ?? "";
+  if (leftText < rightText) {
+    return -1;
+  }
+  if (leftText > rightText) {
+    return 1;
+  }
+  return 0;
+}
+
+function sortTransportToolsByName<T extends { name?: string; description?: string }>(
+  tools: readonly T[],
+): T[] {
+  return tools.toSorted(
+    (left, right) =>
+      compareTransportToolText(left.name, right.name) ||
+      compareTransportToolText(left.description, right.description),
+  );
 }
 
 function extractGoogleThoughtSignature(toolCall: unknown): string | undefined {
@@ -2697,6 +2765,16 @@ function isGoogleOpenAICompatModel(model: OpenAIModeModel): boolean {
 
 function requiresGoogleCompatToolCallThoughtSignature(model: OpenAIModeModel): boolean {
   return model.id.toLowerCase().includes("gemini-3");
+}
+
+const GOOGLE_COMPAT_THOUGHT_SIGNATURE_ELLIPSIS_RE = /[\u2026]|\.\.\./;
+const GOOGLE_COMPAT_THOUGHT_SIGNATURE_BASE64_RE = /^[A-Za-z0-9+/=]+$/;
+
+function hasGoogleCompatThoughtSignatureTruncationFootprint(value: string): boolean {
+  return (
+    GOOGLE_COMPAT_THOUGHT_SIGNATURE_ELLIPSIS_RE.test(value) ||
+    (GOOGLE_COMPAT_THOUGHT_SIGNATURE_BASE64_RE.test(value) && value.length % 4 !== 0)
+  );
 }
 
 function injectToolCallThoughtSignatures(
@@ -2750,8 +2828,14 @@ function injectToolCallThoughtSignatures(
       if (typeof id !== "string") {
         continue;
       }
-      const sig = sigById.get(id) ?? fallbackSig;
-      if (!sig) {
+      let sig: string | undefined = sigById.get(id) ?? fallbackSig;
+      if (typeof sig === "string" && sig.length > 0) {
+        const trimmed = sig.trim();
+        if (hasGoogleCompatThoughtSignatureTruncationFootprint(trimmed)) {
+          sig = fallbackSig;
+        }
+      }
+      if (typeof sig !== "string" || sig.length === 0) {
         continue;
       }
       const extra =
@@ -2878,6 +2962,14 @@ function shouldPreserveReasoningContentReplay(
   );
 }
 
+function shouldPreserveOpenRouterReasoningReplay(model: OpenAIModeModel): boolean {
+  if (model.provider !== "openrouter") {
+    return true;
+  }
+  const normalizedModelId = model.id.trim().toLowerCase();
+  return !(normalizedModelId.startsWith("anthropic/") || normalizedModelId.startsWith("x-ai/"));
+}
+
 // OpenAI Chat Completions assistant-message input does not define reasoning
 // replay fields, while OpenRouter and DeepSeek-style providers document
 // compatible pass-back contracts. Keep valid provider-owned replay fields, but
@@ -2923,7 +3015,8 @@ export function buildOpenAICompletionsParams(
   let messages = convertMessages(model as never, completionsContext, compat as never);
   injectToolCallThoughtSignatures(messages as unknown[], context, model);
   sanitizeCompletionsReasoningReplayFields(messages, {
-    preserveOpenRouterReasoning: compat.thinkingFormat === "openrouter",
+    preserveOpenRouterReasoning:
+      compat.thinkingFormat === "openrouter" && shouldPreserveOpenRouterReasoningReplay(model),
     preserveReasoningContent: shouldPreserveReasoningContentReplay(model, compat),
   });
   if (compat.strictMessageKeys) {
@@ -2995,6 +3088,12 @@ export function buildOpenAICompletionsParams(
     payload: params,
     requestedEffort: completionsReasoningEffort,
   });
+  applyTogetherOpenAICompletionsThinkingParams({
+    compatThinkingFormat: compat.thinkingFormat,
+    modelReasoning: model.reasoning,
+    payload: params,
+    requestedEffort: completionsReasoningEffort,
+  });
   if (
     compat.thinkingFormat === "openrouter" &&
     model.reasoning &&
@@ -3061,7 +3160,7 @@ function mapStopReason(reason: string | null) {
   }
 }
 
-export const __testing = {
+export const testing = {
   assertCodeModeResponsesToolSurface,
   buildOpenAIClientHeaders,
   buildOpenAISdkClientOptions,
@@ -3082,3 +3181,4 @@ export const __testing = {
   summarizeResponsesTools,
   withResponsesFirstEventTimeout,
 };
+export { testing as __testing };

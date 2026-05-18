@@ -26,8 +26,8 @@ import {
   resolveChannelProgressDraftMaxLines,
   resolveChannelStreamingBlockEnabled,
   resolveChannelStreamingPreviewToolProgress,
+  resolveTranscriptBackedChannelFinalText,
 } from "openclaw/plugin-sdk/channel-streaming";
-import { isAbortRequestText } from "openclaw/plugin-sdk/command-primitives-runtime";
 import type {
   OpenClawConfig,
   ReplyToMode,
@@ -35,6 +35,7 @@ import type {
 } from "openclaw/plugin-sdk/config-contracts";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { runInboundReplyTurn } from "openclaw/plugin-sdk/inbound-reply-dispatch";
+import { normalizeMessagePresentation } from "openclaw/plugin-sdk/interactive-runtime";
 import {
   createOutboundPayloadPlan,
   projectOutboundPayloadPlanForDelivery,
@@ -82,7 +83,7 @@ import {
   type TelegramNativeQuoteCandidateByMessageId,
 } from "./bot/native-quote.js";
 import type { TelegramStreamMode } from "./bot/types.js";
-import type { TelegramInlineButtons } from "./button-types.js";
+import { resolveTelegramInlineButtons, type TelegramInlineButtons } from "./button-types.js";
 import { createTelegramDraftStream } from "./draft-stream.js";
 import {
   buildTelegramErrorScopeKey,
@@ -92,12 +93,10 @@ import {
 } from "./error-policy.js";
 import { shouldSuppressLocalTelegramExecApprovalPrompt } from "./exec-approvals.js";
 import { markdownToTelegramChunks, renderTelegramHtmlText } from "./format.js";
-import { beginTelegramInboundTurnDeliveryCorrelation } from "./inbound-turn-delivery.js";
+import { beginTelegramInboundEventDeliveryCorrelation } from "./inbound-event-delivery.js";
 import {
   createLaneDeliveryStateTracker,
   createLaneTextDeliverer,
-  isPotentialTruncatedFinal,
-  selectLongerFinalText,
   type DraftLaneState,
   type LaneDeliveryResult,
   type LaneName,
@@ -107,9 +106,24 @@ import {
   splitTelegramReasoningText,
 } from "./reasoning-lane-coordinator.js";
 import { editMessageTelegram } from "./send.js";
+import { getTelegramSequentialKey } from "./sequential-key.js";
 import { cacheSticker, describeStickerImage } from "./sticker-cache.js";
+import {
+  beginTelegramReplyFence,
+  buildTelegramNonInterruptingReplyFenceKey,
+  buildTelegramReplyFenceLaneKey,
+  endTelegramReplyFence,
+  getTelegramReplyFenceSizeForTests,
+  isTelegramReplyFenceSuperseded,
+  releaseTelegramReplyFenceAbortController,
+  resetTelegramReplyFenceForTests,
+  resolveTelegramReplyFenceKey,
+  shouldSupersedeTelegramReplyFence,
+  supersedeTelegramReplyFence,
+} from "./telegram-reply-fence.js";
 
 export { pruneStickerMediaFromContext } from "./bot-message-dispatch.media.js";
+export { getTelegramReplyFenceSizeForTests, resetTelegramReplyFenceForTests };
 
 const EMPTY_RESPONSE_FALLBACK = "No response generated. Please try again.";
 const silentReplyDispatchLogger = createSubsystemLogger("telegram/silent-reply-dispatch");
@@ -133,6 +147,20 @@ function resolveDraftPartialText(
     return undefined;
   }
   return nextText;
+}
+
+function resolvePayloadTelegramInlineButtons(
+  payload: ReplyPayload,
+): TelegramInlineButtons | undefined {
+  const telegramData = payload.channelData?.telegram as
+    | { buttons?: TelegramInlineButtons }
+    | undefined;
+  const presentation = normalizeMessagePresentation(payload.presentation);
+  return resolveTelegramInlineButtons({
+    buttons: telegramData?.buttons,
+    presentation,
+    interactive: payload.interactive,
+  });
 }
 
 async function resolveStickerVisionSupport(cfg: OpenClawConfig, agentId: string) {
@@ -165,140 +193,6 @@ type DispatchTelegramMessageParams = {
 type TelegramReasoningLevel = "off" | "on" | "stream";
 
 type TelegramTranscriptMirrorPayload = { text?: string; mediaUrls?: string[] };
-
-type TelegramReplyFenceState = {
-  generation: number;
-  activeDispatches: number;
-  abortControllers?: Set<AbortController>;
-};
-
-type TelegramReplyFenceKey = {
-  activeKey: string;
-  roomEventKey: string;
-};
-
-// Newer accepted turns and authorized aborts can arrive ahead of older same-session reply work.
-const telegramReplyFenceByKey = new Map<string, TelegramReplyFenceState>();
-
-function normalizeTelegramFenceKey(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function resolveTelegramReplyFenceKey(params: {
-  ctxPayload: { SessionKey?: string; CommandTargetSessionKey?: string; InboundTurnKind?: string };
-  chatId: number | string;
-  threadSpec: { id?: number | string | null; scope?: string };
-}): TelegramReplyFenceKey {
-  const baseKey =
-    normalizeTelegramFenceKey(params.ctxPayload.CommandTargetSessionKey) ??
-    normalizeTelegramFenceKey(params.ctxPayload.SessionKey) ??
-    `telegram:${String(params.chatId)}:${params.threadSpec.scope ?? "default"}:${params.threadSpec.id ?? "root"}`;
-  const roomEventKey = `${baseKey}:room_event`;
-  return {
-    activeKey: params.ctxPayload.InboundTurnKind === "room_event" ? roomEventKey : baseKey,
-    roomEventKey,
-  };
-}
-
-function abortTelegramReplyFenceControllers(state: TelegramReplyFenceState): void {
-  for (const controller of state.abortControllers ?? []) {
-    controller.abort();
-  }
-  state.abortControllers?.clear();
-}
-
-function beginTelegramReplyFence(params: {
-  key: string;
-  supersede: boolean;
-  abortController?: AbortController;
-}): number {
-  const existing = telegramReplyFenceByKey.get(params.key);
-  const state: TelegramReplyFenceState = existing ?? {
-    generation: 0,
-    activeDispatches: 0,
-  };
-  if (params.supersede) {
-    state.generation += 1;
-    abortTelegramReplyFenceControllers(state);
-  }
-  if (params.abortController) {
-    (state.abortControllers ??= new Set()).add(params.abortController);
-  }
-  state.activeDispatches += 1;
-  telegramReplyFenceByKey.set(params.key, state);
-  return state.generation;
-}
-
-function supersedeTelegramReplyFence(key: string): void {
-  const state = telegramReplyFenceByKey.get(key);
-  if (!state) {
-    return;
-  }
-  state.generation += 1;
-  abortTelegramReplyFenceControllers(state);
-  if (state.activeDispatches <= 0 && (state.abortControllers?.size ?? 0) === 0) {
-    telegramReplyFenceByKey.delete(key);
-  } else {
-    telegramReplyFenceByKey.set(key, state);
-  }
-}
-
-function isTelegramReplyFenceSuperseded(params: { key: string; generation: number }): boolean {
-  return (telegramReplyFenceByKey.get(params.key)?.generation ?? 0) !== params.generation;
-}
-
-function endTelegramReplyFence(key: string, abortController?: AbortController): void {
-  const state = telegramReplyFenceByKey.get(key);
-  if (!state) {
-    return;
-  }
-  if (abortController) {
-    state.abortControllers?.delete(abortController);
-  }
-  state.activeDispatches = Math.max(0, state.activeDispatches - 1);
-  if (state.activeDispatches <= 0 && (state.abortControllers?.size ?? 0) === 0) {
-    telegramReplyFenceByKey.delete(key);
-  }
-}
-
-function releaseTelegramReplyFenceAbortController(
-  key: string,
-  abortController?: AbortController,
-): void {
-  if (!abortController) {
-    return;
-  }
-  const state = telegramReplyFenceByKey.get(key);
-  if (!state) {
-    return;
-  }
-  state.abortControllers?.delete(abortController);
-  if (state.activeDispatches <= 0 && (state.abortControllers?.size ?? 0) === 0) {
-    telegramReplyFenceByKey.delete(key);
-  }
-}
-
-function shouldSupersedeTelegramReplyFence(ctxPayload: {
-  Body?: string;
-  RawBody?: string;
-  CommandBody?: string;
-  CommandAuthorized: boolean;
-}): boolean {
-  const dispatchText = ctxPayload.CommandBody ?? ctxPayload.RawBody ?? ctxPayload.Body ?? "";
-  return !isAbortRequestText(dispatchText) || ctxPayload.CommandAuthorized;
-}
-
-export function getTelegramReplyFenceSizeForTests(): number {
-  return telegramReplyFenceByKey.size;
-}
-
-export function resetTelegramReplyFenceForTests(): void {
-  telegramReplyFenceByKey.clear();
-}
 
 function resolveTelegramReasoningLevel(params: {
   cfg: OpenClawConfig;
@@ -468,7 +362,7 @@ export const dispatchTelegramMessage = async ({
     removeAckAfterReply,
     statusReactionController: rawStatusReactionController,
   } = context;
-  const isRoomEvent = ctxPayload.InboundTurnKind === "room_event";
+  const isRoomEvent = ctxPayload.InboundEventKind === "room_event";
   const statusReactionController = isRoomEvent ? null : rawStatusReactionController;
   const statusReactionTiming = {
     ...DEFAULT_TIMING,
@@ -517,14 +411,23 @@ export const dispatchTelegramMessage = async ({
     chatId,
     threadSpec,
   });
+  const replyFenceLaneKey = getTelegramSequentialKey({
+    message: msg,
+    ...(context.primaryCtx.me ? { me: context.primaryCtx.me } : {}),
+  });
+  const scopedReplyFenceLaneKey = buildTelegramReplyFenceLaneKey({
+    accountId: route.accountId,
+    sequentialKey: replyFenceLaneKey,
+  });
+  let activeReplyFenceKey = replyFenceKey.activeKey;
   let replyFenceGeneration: number | undefined;
-  const roomEventAbortController = isRoomEvent ? new AbortController() : undefined;
-  let roomEventAbortControllerQueued = false;
+  const replyAbortController = new AbortController();
+  let replyAbortControllerQueued = false;
   let dispatchWasSuperseded = false;
   const isDispatchSuperseded = () =>
     replyFenceGeneration !== undefined &&
     isTelegramReplyFenceSuperseded({
-      key: replyFenceKey.activeKey,
+      key: activeReplyFenceKey,
       generation: replyFenceGeneration,
     });
   const releaseReplyFence = () => {
@@ -532,8 +435,8 @@ export const dispatchTelegramMessage = async ({
       return;
     }
     endTelegramReplyFence(
-      replyFenceKey.activeKey,
-      roomEventAbortControllerQueued ? undefined : roomEventAbortController,
+      activeReplyFenceKey,
+      replyAbortControllerQueued ? undefined : replyAbortController,
     );
     replyFenceGeneration = undefined;
   };
@@ -920,13 +823,20 @@ export const dispatchTelegramMessage = async ({
   const chunkMode = resolveChunkMode(cfg, "telegram", route.accountId);
 
   const supersedeReplyFence = shouldSupersedeTelegramReplyFence(ctxPayload);
+  activeReplyFenceKey = supersedeReplyFence
+    ? replyFenceKey.activeKey
+    : buildTelegramNonInterruptingReplyFenceKey({
+        activeKey: replyFenceKey.activeKey,
+        laneKey: scopedReplyFenceLaneKey,
+      });
   if (!isRoomEvent && supersedeReplyFence) {
     supersedeTelegramReplyFence(replyFenceKey.roomEventKey);
   }
   replyFenceGeneration = beginTelegramReplyFence({
-    key: replyFenceKey.activeKey,
+    key: activeReplyFenceKey,
     supersede: supersedeReplyFence,
-    abortController: roomEventAbortController,
+    abortController: replyAbortController,
+    laneKey: scopedReplyFenceLaneKey,
   });
 
   const implicitQuoteReplyTargetId =
@@ -950,21 +860,21 @@ export const dispatchTelegramMessage = async ({
     }
   };
   const beginDeliveryCorrelation = () =>
-    beginTelegramInboundTurnDeliveryCorrelation(
+    beginTelegramInboundEventDeliveryCorrelation(
       ctxPayload.SessionKey,
       {
         outboundTo: historyKey || String(chatId),
         outboundAccountId: route.accountId,
-        markInboundTurnDelivered: () => {
+        markInboundEventDelivered: () => {
           deliveryState.markDelivered();
           if (isRoomEvent) {
             clearGroupHistory();
           }
         },
       },
-      { inboundTurnKind: ctxPayload.InboundTurnKind },
+      { inboundEventKind: ctxPayload.InboundEventKind },
     );
-  const endTelegramInboundTurnDeliveryCorrelation = beginDeliveryCorrelation();
+  const endTelegramInboundEventDeliveryCorrelation = beginDeliveryCorrelation();
   const sessionKey = ctxPayload.SessionKey;
   const resolveCurrentTurnTranscriptFinalText = async (): Promise<string | undefined> => {
     if (!sessionKey) {
@@ -1182,6 +1092,7 @@ export const dispatchTelegramMessage = async ({
       }
       const result = await (telegramDeps.deliverReplies ?? deliverReplies)({
         ...deliveryBaseOptions,
+        transcriptMirror: options?.durable ? deliveryBaseOptions.transcriptMirror : undefined,
         replies: [deliverablePayload],
         onVoiceRecording: sendRecordVoice,
         silent,
@@ -1263,12 +1174,10 @@ export const dispatchTelegramMessage = async ({
       return delivered ? { kind: "sent" } : { kind: "skipped" };
     };
     const resolveTranscriptBackedFinalText = async (text: string): Promise<string> =>
-      isPotentialTruncatedFinal(text)
-        ? (selectLongerFinalText({
-            finalText: text,
-            candidateTexts: [await resolveCurrentTurnTranscriptFinalText()],
-          }) ?? text)
-        : text;
+      await resolveTranscriptBackedChannelFinalText({
+        finalText: text,
+        resolveCandidateText: resolveCurrentTurnTranscriptFinalText,
+      });
 
     if (isDmTopic) {
       try {
@@ -1375,11 +1284,7 @@ export const dispatchTelegramMessage = async ({
                       queuedFinal = true;
                       return;
                     }
-                    const telegramButtons = (
-                      effectivePayload.channelData?.telegram as
-                        | { buttons?: TelegramInlineButtons }
-                        | undefined
-                    )?.buttons;
+                    const telegramButtons = resolvePayloadTelegramInlineButtons(effectivePayload);
                     const split = splitTextIntoLaneSegments(
                       { text: effectivePayload.text },
                       payload.isReasoning,
@@ -1412,11 +1317,7 @@ export const dispatchTelegramMessage = async ({
                       if (!buffered) {
                         return;
                       }
-                      const bufferedButtons = (
-                        buffered.payload.channelData?.telegram as
-                          | { buttons?: TelegramInlineButtons }
-                          | undefined
-                      )?.buttons;
+                      const bufferedButtons = resolvePayloadTelegramInlineButtons(buffered.payload);
                       await deliverFinalAnswerText(
                         buffered.payload,
                         buffered.text,
@@ -1563,26 +1464,25 @@ export const dispatchTelegramMessage = async ({
                 replyOptions: {
                   skillFilter,
                   disableBlockStreaming,
-                  abortSignal: roomEventAbortController?.signal,
+                  abortSignal: replyAbortController.signal,
                   sourceReplyDeliveryMode: isRoomEvent ? "message_tool_only" : undefined,
                   queuedDeliveryCorrelations: isRoomEvent
                     ? [{ begin: beginDeliveryCorrelation }]
                     : undefined,
-                  queuedFollowupLifecycle:
-                    isRoomEvent && roomEventAbortController
-                      ? {
-                          onEnqueued: () => {
-                            roomEventAbortControllerQueued = true;
-                          },
-                          onComplete: () => {
-                            roomEventAbortControllerQueued = false;
-                            releaseTelegramReplyFenceAbortController(
-                              replyFenceKey.activeKey,
-                              roomEventAbortController,
-                            );
-                          },
-                        }
-                      : undefined,
+                  queuedFollowupLifecycle: isRoomEvent
+                    ? {
+                        onEnqueued: () => {
+                          replyAbortControllerQueued = true;
+                        },
+                        onComplete: () => {
+                          replyAbortControllerQueued = false;
+                          releaseTelegramReplyFenceAbortController(
+                            activeReplyFenceKey,
+                            replyAbortController,
+                          );
+                        },
+                      }
+                    : undefined,
                   suppressTyping: isRoomEvent,
                   onPartialReply:
                     answerLane.stream || reasoningLane.stream
@@ -1775,7 +1675,7 @@ export const dispatchTelegramMessage = async ({
   } finally {
     dispatchWasSuperseded = isDispatchSuperseded();
     releaseReplyFence();
-    endTelegramInboundTurnDeliveryCorrelation();
+    endTelegramInboundEventDeliveryCorrelation();
   }
   if (dispatchWasSuperseded) {
     if (statusReactionController) {

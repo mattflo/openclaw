@@ -13,7 +13,10 @@ OpenClaw ships a bundled `xai` provider plugin for Grok models.
 <Steps>
   <Step title="Choose auth">
     Use either an API key from the [xAI console](https://console.x.ai/) or
-    xAI Grok OAuth with a SuperGrok subscription.
+    xAI OAuth browser sign-in with an eligible xAI account. OAuth does not
+    require an xAI API key, and OpenClaw does not require the Grok Build app.
+    xAI may still label the consent app as Grok Build because OpenClaw uses
+    xAI's shared OAuth client.
   </Step>
   <Step title="Sign in">
     Set `XAI_API_KEY`, run the API-key wizard, or start the OAuth flow:
@@ -50,24 +53,21 @@ and, by default, `x_search` through an operator xAI Responses proxy.
 
 ## Built-in catalog
 
-OpenClaw includes these xAI model families out of the box:
+OpenClaw includes the current xAI chat models out of the box, ordered newest
+first in model pickers:
 
 | Family         | Model ids                                                                |
 | -------------- | ------------------------------------------------------------------------ |
-| Grok 3         | `grok-3`, `grok-3-fast`, `grok-3-mini`, `grok-3-mini-fast`               |
 | Grok 4.3       | `grok-4.3`                                                               |
-| Grok 4         | `grok-4`, `grok-4-0709`                                                  |
-| Grok 4 Fast    | `grok-4-fast`, `grok-4-fast-non-reasoning`                               |
-| Grok 4.1 Fast  | `grok-4-1-fast`, `grok-4-1-fast-non-reasoning`                           |
 | Grok 4.20 Beta | `grok-4.20-beta-latest-reasoning`, `grok-4.20-beta-latest-non-reasoning` |
-| Grok Code      | `grok-code-fast-1`                                                       |
 
-The plugin also forward-resolves newer `grok-4*` and `grok-code-fast*` ids when
-they follow the same API shape.
+The plugin still forward-resolves older Grok 3, Grok 4, Grok 4 Fast, Grok 4.1
+Fast, and Grok Code slugs for existing configs, but OpenClaw no longer shows
+those retired upstream slugs in the selectable catalog.
 
 <Tip>
-`grok-4.3`, `grok-4-fast`, `grok-4-1-fast`, and the `grok-4.20-beta-*`
-variants are the current image-capable Grok refs in the bundled catalog.
+Use `grok-4.3` for new chat and coding workloads unless you explicitly need a
+Grok 4.20 beta alias.
 </Tip>
 
 ## OpenClaw feature coverage
@@ -183,7 +183,7 @@ Legacy aliases still normalize to the canonical bundled ids:
     `image_generate` tool.
 
     - Default image model: `xai/grok-imagine-image`
-    - Additional model: `xai/grok-imagine-image-pro`
+    - Additional model: `xai/grok-imagine-image-quality`
     - Modes: text-to-image and reference-image edit
     - Reference inputs: one `image` or up to five `images`
     - Aspect ratios: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `2:3`, `3:2`
@@ -417,9 +417,11 @@ Legacy aliases still normalize to the canonical bundled ids:
 
   <Accordion title="Known limits">
     - xAI auth can use an API key, environment variable, plugin config fallback,
-      or xAI Grok OAuth with a SuperGrok subscription. OAuth uses a local
-      callback on `127.0.0.1:56121`; for remote hosts, forward that port before
-      opening the sign-in URL.
+      or xAI OAuth browser sign-in with an eligible xAI account. OAuth uses a
+      local callback on `127.0.0.1:56121`; for remote hosts, forward that port
+      before opening the sign-in URL. xAI decides which accounts can receive
+      OAuth API tokens, and the consent page may show Grok Build even though
+      OpenClaw does not require the Grok Build app.
     - `grok-4.20-multi-agent-experimental-beta-0304` is not supported on the
       normal xAI provider path because it requires a different upstream API
       surface than the standard OpenClaw xAI transport.

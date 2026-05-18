@@ -115,7 +115,7 @@ export const zh_TW = {
       cacheFailed: "產生 completion 快取失敗。稍後執行 `{command}`。",
       enable: "為 {cli} 啟用 {shell} shell completion？",
       installed: "Shell completion 已安裝。{reloadHint}",
-      reloadPowerShell: "重新啟動 shell（或重新載入 PowerShell profile）。",
+      reloadPowerShell: "重新啟動 shell 或執行：{command}",
       reloadShell: "重新啟動 shell 或執行：source {profile}",
       title: "Shell completion",
     },
@@ -300,6 +300,10 @@ export const zh_TW = {
     },
     skills: {
       configure: "現在設定技能？（建議）",
+      containerBrewHidden:
+        "在 Linux 容器中會隱藏僅支援 brew 的技能安裝項，因為官方映像檔不包含 Homebrew。",
+      containerBrewManual: "請使用預先安裝 Homebrew 的自訂映像檔，或手動安裝這些依賴。",
+      containerInstallsTitle: "容器技能安裝",
       docsLine: "文件：https://docs.openclaw.ai/skills",
       enterEnv: "輸入 {env}",
       homebrewCommand: "顯示 Homebrew 安裝命令？",

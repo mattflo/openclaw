@@ -1,5 +1,9 @@
 import crypto from "node:crypto";
-import { hasSessionAutoModelFallbackProvenance } from "../../agents/agent-scope.js";
+import {
+  clearAutoFallbackPrimaryProbeSelection,
+  hasSessionAutoModelFallbackProvenance,
+  type AutoFallbackPrimaryProbe,
+} from "../../agents/agent-scope.js";
 import { resolveSessionAuthProfileOverride } from "../../agents/auth-profiles/session-override.js";
 import type { ExecToolDefaults } from "../../agents/bash-tools.js";
 import { resolveFastModeState } from "../../agents/fast-mode.js";
@@ -50,6 +54,7 @@ import { SILENT_REPLY_TOKEN } from "../tokens.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import { applySessionHints } from "./body.js";
 import type { buildCommandContext } from "./commands.js";
+import { resolveCurrentTurnImages } from "./current-turn-images.js";
 import type { InlineDirectives } from "./directive-handling.js";
 import { isSystemEventProvider } from "./effective-reply-route.js";
 import { shouldUseReplyFastTestRuntime } from "./get-reply-fast-path.js";
@@ -354,6 +359,7 @@ type RunPreparedReplyParams = {
   hasAppliedImageModelOverride?: boolean;
   imageModelOverrideBaseProvider?: string;
   imageModelFallbacksOverride?: string[];
+  autoFallbackPrimaryProbe?: AutoFallbackPrimaryProbe;
 };
 
 export async function runPreparedReply(
@@ -432,7 +438,7 @@ export async function runPreparedReply(
     ctx,
     isHeartbeat,
   });
-  const inboundTurnKind = promptSessionCtx.InboundTurnKind;
+  const inboundEventKind = promptSessionCtx.InboundEventKind;
   const silentReplyConversationType = resolvePromptSilentReplyConversationType({
     ctx: promptSessionCtx,
     inboundSessionKey: ctx.SessionKey,
@@ -656,7 +662,7 @@ export async function runPreparedReply(
     startupContextPrelude,
     softResetTail,
     isHeartbeat,
-    turnKind: inboundTurnKind,
+    inboundEventKind: inboundEventKind,
   });
   const effectiveBaseBody = promptEnvelopeBase.effectiveBaseBody;
   let prefixedBodyBase = await applySessionHints({
@@ -699,7 +705,7 @@ export async function runPreparedReply(
     prefixedCommandBody: string;
     queuedBody: string;
     transcriptCommandBody: string;
-    currentTurnContext?: typeof promptEnvelopeBase.currentTurnContext;
+    currentInboundContext?: typeof promptEnvelopeBase.currentInboundContext;
   }> => {
     if (!useFastReplyRuntime) {
       const eventsBlock = await drainFormattedSystemEventBlock({
@@ -728,7 +734,7 @@ export async function runPreparedReply(
       startupContextPrelude,
       softResetTail,
       isHeartbeat,
-      turnKind: inboundTurnKind,
+      inboundEventKind: inboundEventKind,
       threadContextNote,
       systemEventBlocks: drainedSystemEventBlocks,
     });
@@ -757,9 +763,9 @@ export async function runPreparedReply(
   sessionEntry = skillResult.sessionEntry ?? sessionEntry;
   currentSystemSent = skillResult.systemSent;
   const skillsSnapshot = skillResult.skillsSnapshot;
-  let { prefixedCommandBody, queuedBody, transcriptCommandBody, currentTurnContext } =
+  let { prefixedCommandBody, queuedBody, transcriptCommandBody, currentInboundContext } =
     await traceRunPhase("reply.build_prompt_bodies", () => rebuildPromptBodies());
-  const isRoomEvent = inboundTurnKind === "room_event";
+  const isRoomEvent = inboundEventKind === "room_event";
   if (!resolvedThinkLevel) {
     resolvedThinkLevel = await modelState.resolveDefaultThinkingLevel();
   }
@@ -916,12 +922,17 @@ export async function runPreparedReply(
         authProfileIdSource: preparedSessionState.sessionEntry?.authProfileOverrideSource,
       };
     }
-    const shouldUseEphemeralSession = shouldResolveEphemeralAuthProfileForImageOverride();
+    const shouldUseEphemeralSession =
+      shouldResolveEphemeralAuthProfileForImageOverride() ||
+      params.autoFallbackPrimaryProbe !== undefined;
     const authSessionKey = shouldUseEphemeralSession ? (sessionKey ?? sessionIdFinal) : sessionKey;
     const authSessionEntry =
       shouldUseEphemeralSession && preparedSessionState.sessionEntry
         ? { ...preparedSessionState.sessionEntry }
         : preparedSessionState.sessionEntry;
+    if (params.autoFallbackPrimaryProbe && authSessionEntry) {
+      clearAutoFallbackPrimaryProbeSelection(authSessionEntry);
+    }
     const authSessionStore =
       shouldUseEphemeralSession && authSessionEntry
         ? { [authSessionKey]: authSessionEntry }
@@ -1000,7 +1011,7 @@ export async function runPreparedReply(
         preparedSessionState = resolvePreparedSessionState();
         ({ authProfileId, authProfileIdSource } = await resolveRuntimeAuthProfile());
         preparedSessionState = resolvePreparedSessionState();
-        ({ prefixedCommandBody, queuedBody, transcriptCommandBody, currentTurnContext } =
+        ({ prefixedCommandBody, queuedBody, transcriptCommandBody, currentInboundContext } =
           await traceRunPhase("reply.build_prompt_bodies", () => rebuildPromptBodies()));
       },
       resolveBusyState: resolveQueueBusyState,
@@ -1025,19 +1036,27 @@ export async function runPreparedReply(
     ctx,
     sessionKey,
   });
+  const currentTurnImages = await traceRunPhase("reply.resolve_current_turn_images", () =>
+    resolveCurrentTurnImages({
+      ctx,
+      cfg,
+      images: opts?.images,
+      imageOrder: opts?.imageOrder,
+    }),
+  );
   const followupRun = {
     prompt: queuedBody,
     transcriptPrompt: transcriptCommandBody,
-    currentTurnKind: inboundTurnKind,
-    currentTurnContext,
+    currentInboundEventKind: inboundEventKind,
+    currentInboundContext,
     abortSignal: opts?.abortSignal,
     deliveryCorrelations: opts?.queuedDeliveryCorrelations,
     queuedLifecycle: opts?.queuedFollowupLifecycle,
     messageId: sessionCtx.MessageSidFull ?? sessionCtx.MessageSid,
     summaryLine: baseBodyTrimmedRaw,
     enqueuedAt: Date.now(),
-    images: opts?.images,
-    imageOrder: opts?.imageOrder,
+    images: currentTurnImages.images,
+    imageOrder: currentTurnImages.imageOrder,
     // Originating channel for reply routing.
     originatingChannel: ctx.OriginatingChannel,
     originatingTo: ctx.OriginatingTo,
@@ -1082,6 +1101,7 @@ export async function runPreparedReply(
       modelOverrideSource: runModelOverrideSource,
       hasAutoFallbackProvenance: runHasAutoFallbackProvenance || undefined,
       imageModelFallbacksOverride,
+      autoFallbackPrimaryProbe: params.autoFallbackPrimaryProbe,
       authProfileId,
       authProfileIdSource,
       thinkLevel: resolvedThinkLevel,

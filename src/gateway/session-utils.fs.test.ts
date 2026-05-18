@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+import { estimateStringChars, estimateTokensFromChars } from "../utils/cjk-chars.js";
 import { createToolSummaryPreviewTranscriptLines } from "./session-preview.test-helpers.js";
 import { clearSessionTranscriptIndexCache } from "./session-transcript-index.fs.js";
 import {
@@ -97,7 +98,7 @@ function appendBlockedUserMessageWithSessionManager(params: {
       },
     },
   } as Parameters<typeof sessionManager.appendMessage>[0]);
-  (sessionManager as unknown as { _rewriteFile?: () => void })._rewriteFile?.();
+  (sessionManager as unknown as { _rewriteFile?: () => void })["_rewriteFile"]?.();
   return messageId;
 }
 
@@ -132,7 +133,7 @@ function expectMessageFields(
     expect(record.content).toEqual(fields.content);
   }
   if (fields.openclaw) {
-    const metadata = requireRecord(record.__openclaw, "message metadata");
+    const metadata = requireRecord(record["__openclaw"], "message metadata");
     for (const [key, value] of Object.entries(fields.openclaw)) {
       expect(metadata[key]).toEqual(value);
     }
@@ -611,8 +612,8 @@ describe("readSessionMessages", () => {
     };
     expect(marker.role).toBe("system");
     expect(marker.content?.[0]?.text).toBe("Compaction");
-    expect(marker.__openclaw?.kind).toBe("compaction");
-    expect(marker.__openclaw?.id).toBe("comp-1");
+    expect(marker["__openclaw"]?.kind).toBe("compaction");
+    expect(marker["__openclaw"]?.id).toBe("comp-1");
     expect(typeof marker.timestamp).toBe("number");
   });
 
@@ -1222,7 +1223,7 @@ describe("readSessionMessages", () => {
       const out = readSessionMessages(sessionId, wrongStorePath, sessionFile);
       expect(out).toHaveLength(1);
       expectMessageFields(out[0], message);
-      expect((out[0] as { __openclaw?: { seq?: number } }).__openclaw?.seq).toBe(1);
+      expect((out[0] as { __openclaw?: { seq?: number } })["__openclaw"]?.seq).toBe(1);
     },
   );
 
@@ -1320,7 +1321,7 @@ describe("readSessionMessages", () => {
       out.map((message) => ({
         role: (message as { role?: string }).role,
         content: (message as { content?: unknown }).content,
-        kind: (message as { __openclaw?: { kind?: string } }).__openclaw?.kind,
+        kind: (message as { __openclaw?: { kind?: string } })["__openclaw"]?.kind,
       })),
     ).toEqual([
       { role: "system", content: [{ type: "text", text: "Compaction" }], kind: "compaction" },
@@ -1810,6 +1811,44 @@ describe("readLatestSessionUsageFromTranscript", () => {
     } finally {
       readFileSpy.mockRestore();
     }
+  });
+
+  test("estimates transcript context when local model usage telemetry is missing", () => {
+    const sessionId = "usage-local-missing-telemetry";
+    const userText = "local prompt ".repeat(200);
+    const assistantText = "local response ".repeat(120);
+    writeTranscript(tmpDir, sessionId, [
+      { type: "session", version: 1, id: sessionId },
+      { message: { role: "user", content: userText } },
+      {
+        message: {
+          role: "assistant",
+          provider: "openai-completions",
+          model: "local-llama",
+          content: [{ type: "text", text: assistantText }],
+        },
+      },
+    ]);
+
+    const expectedTotalTokens = estimateTokensFromChars(
+      estimateStringChars(userText) + estimateStringChars(assistantText),
+    );
+
+    expectUsageFields(readLatestSessionUsageFromTranscript(sessionId, storePath), {
+      modelProvider: "openai-completions",
+      model: "local-llama",
+      totalTokens: expectedTotalTokens,
+      totalTokensFresh: true,
+    });
+    expectUsageFields(
+      readRecentSessionUsageFromTranscript(sessionId, storePath, undefined, undefined, 64 * 1024),
+      {
+        modelProvider: "openai-completions",
+        model: "local-llama",
+        totalTokens: expectedTotalTokens,
+        totalTokensFresh: true,
+      },
+    );
   });
 
   test("returns null when the transcript has no assistant usage snapshot", () => {
