@@ -49,6 +49,7 @@ type WebMediaOptions = {
   proxyUrl?: string;
   fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   requestInit?: RequestInit;
+  readIdleTimeoutMs?: number;
   trustExplicitProxyDns?: boolean;
   workspaceDir?: string;
   /** Allowed root directories for local path reads. "any" is deprecated; prefer sandboxValidated + readFile. */
@@ -389,6 +390,7 @@ async function loadWebMediaInternal(
     proxyUrl,
     fetchImpl,
     requestInit,
+    readIdleTimeoutMs,
     trustExplicitProxyDns,
     workspaceDir,
     localRoots,
@@ -522,6 +524,7 @@ async function loadWebMediaInternal(
       url: mediaUrl,
       fetchImpl,
       requestInit,
+      readIdleTimeoutMs,
       maxBytes: fetchCap,
       ssrfPolicy,
       dispatcherPolicy,
