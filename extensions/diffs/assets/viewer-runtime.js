@@ -20416,13 +20416,16 @@ async function G9() {
       (z.wrapEnabled = n.options.overflow === "wrap"));
   for (let { payload: a } of e) for (let r of a.langs) t.add(r);
   (await uo({ themes: ["pierre-light", "pierre-dark"], langs: [...t] }), Tk());
-  for (let { host: a, payload: r } of e) {
-    j9(a);
-    let i = new Po(zk(r));
-    i.hydrate({ fileContainer: a, prerenderedHTML: r.prerenderedHTML, ...N9(r) });
-    let o = { payload: r, diff: i };
-    (Pk.push(o), Hk(o));
-  }
+  for (let { host: a, payload: r } of e)
+    try {
+      j9(a);
+      let i = new Po(zk(r));
+      i.hydrate({ fileContainer: a, prerenderedHTML: r.prerenderedHTML, ...N9(r) });
+      let o = { payload: r, diff: i };
+      (Hk(o), Pk.push(o));
+    } catch (i) {
+      console.warn("Skipping diff card that failed to hydrate", i);
+    }
 }
 async function Gk() {
   try {
@@ -20432,7 +20435,9 @@ async function Gk() {
       console.error("Failed to hydrate diff viewer", e));
   }
 }
-if (typeof document < "u")
+var W9 = Symbol.for("openclaw.diffs.disableAutoStart"),
+  Y9 = !!globalThis[W9];
+if (typeof document < "u" && !Y9)
   if (document.readyState === "loading")
     document.addEventListener("DOMContentLoaded", () => {
       Gk();
