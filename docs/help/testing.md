@@ -154,6 +154,12 @@ inside every shard.
     `aimock` starts a local AIMock-backed provider server for experimental
     fixture and protocol-mock coverage without replacing the scenario-aware
     `mock-openai` lane.
+- `pnpm openclaw qa coverage --match <query>`
+  - Searches scenario IDs, titles, surfaces, coverage IDs, docs refs, code refs,
+    plugins, and provider requirements, then prints matching suite targets.
+  - Use this before a QA Lab run when you know the touched behavior or file path
+    but not the smallest scenario. It is advisory only; still choose mock,
+    live, Multipass, Matrix, or transport proof from the behavior being changed.
 - `pnpm test:plugins:kitchen-sink-live`
   - Runs the live OpenAI Kitchen Sink plugin gauntlet through QA Lab. It
     installs the external Kitchen Sink package, verifies the plugin SDK surface
@@ -242,7 +248,7 @@ gh workflow run package-acceptance.yml --ref main \
   -f telegram_mode=mock-openai
 ```
 
-- Exact tarball URL proof requires a digest:
+- Exact tarball URL proof requires a digest and uses the public URL safety policy:
 
 ```bash
 gh workflow run package-acceptance.yml --ref main \
@@ -251,6 +257,19 @@ gh workflow run package-acceptance.yml --ref main \
   -f package_sha256=<sha256> \
   -f suite_profile=package
 ```
+
+- Enterprise/private tarball mirrors use an explicit trusted-source policy:
+
+```bash
+gh workflow run package-acceptance.yml --ref main \
+  -f source=trusted-url \
+  -f trusted_source_id=enterprise-artifactory \
+  -f package_url=https://packages.example.internal:8443/artifactory/openclaw/openclaw-VERSION.tgz \
+  -f package_sha256=<sha256> \
+  -f suite_profile=package
+```
+
+`source=trusted-url` reads `.github/package-trusted-sources.json` from the trusted workflow ref and does not accept URL credentials or a workflow-input private-network bypass. If the named policy declares bearer auth, configure the fixed `OPENCLAW_TRUSTED_PACKAGE_TOKEN` secret.
 
 - Artifact proof downloads a tarball artifact from another Actions run:
 

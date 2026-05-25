@@ -1052,6 +1052,20 @@ export const FIELD_HELP: Record<string, string> = {
     "Optional low-level agent runtime policy for this specific model. Model runtime policy overrides the provider runtime policy.",
   "models.providers.*.models[].agentRuntime.id":
     'Model agent runtime id: "pi", "auto", a registered plugin harness id such as "codex", or a supported CLI backend alias such as "claude-cli".',
+  "models.providers.*.models[].mediaInput":
+    "Optional model media capability metadata used by tools to choose conservative image compression defaults.",
+  "models.providers.*.models[].mediaInput.image":
+    "Optional image input limits for this model, such as maximum side length, maximum pixels, and preferred compression side.",
+  "models.providers.*.models[].mediaInput.image.maxBytes":
+    "Maximum encoded image payload size accepted by the provider for this model.",
+  "models.providers.*.models[].mediaInput.image.maxPixels":
+    "Maximum image pixel count accepted by the provider for this model.",
+  "models.providers.*.models[].mediaInput.image.maxSidePx":
+    "Maximum image width or height accepted by the provider for this model.",
+  "models.providers.*.models[].mediaInput.image.preferredSidePx":
+    "Preferred image resize side for balanced compression. Leave unset to use OpenClaw's conservative default.",
+  "models.providers.*.models[].mediaInput.image.tokenMode":
+    'Provider image token accounting style: "tile", "detail", or "provider".',
   auth: "Authentication profile root used for multi-profile provider credentials and cooldown-based failover ordering. Keep profiles minimal and explicit so automatic failover behavior stays auditable.",
   "channels.googlechat.botLoopProtection":
     "Sliding-window guard for accepted Google Chat bot-to-bot loops. Defaults to the shared bot loop protection budget when allowBots lets bot-authored messages reach dispatch.",
@@ -1431,6 +1445,8 @@ export const FIELD_HELP: Record<string, string> = {
     "Maximum number of PDF pages to process for the PDF tool (default: 20).",
   "agents.defaults.imageMaxDimensionPx":
     "Max image side length in pixels when sanitizing transcript/tool-result image payloads (default: 1200).",
+  "agents.defaults.imageQuality":
+    'Image-tool media compression preference: "auto" adapts to provider/model limits and image count, "efficient" saves tokens and bytes, "balanced" keeps the current middle ground, and "high" preserves more detail for screenshots and document images.',
   "agents.defaults.cliBackends": "Optional CLI backends for text-only fallback (claude-cli, etc.).",
   "agents.defaults.compaction":
     "Compaction tuning for when context nears token limits, including history share, reserve headroom, and pre-compaction memory flush behavior. Use this when long-running sessions need stable continuity under tight context windows.",
@@ -1465,7 +1481,7 @@ export const FIELD_HELP: Record<string, string> = {
   "agents.defaults.compaction.postIndexSync":
     'Controls post-compaction session memory reindex mode: "off", "async", or "await" (default: "async"). Use "await" for strongest freshness, "async" for lower compaction latency, and "off" only when session-memory sync is handled elsewhere.',
   "agents.defaults.compaction.postCompactionSections":
-    'AGENTS.md H2/H3 section names re-injected after compaction so the agent reruns critical startup guidance. Leave unset to use "Session Startup"/"Red Lines" with legacy fallback to "Every Session"/"Safety"; set to [] to disable reinjection entirely.',
+    'Opt-in AGENTS.md H2/H3 section names re-injected after compaction so the agent reruns critical startup guidance. Leave unset or set [] to disable reinjection. Explicitly set ["Session Startup", "Red Lines"] to enable the legacy default pair with fallback to older "Every Session"/"Safety" headings. Enabling this can duplicate project context already present in the compaction summary.',
   "agents.defaults.compaction.timeoutSeconds":
     "Maximum time in seconds allowed for a single compaction operation before it is aborted (default: 900). Increase this for very large sessions that need more time to summarize, or decrease it to fail faster on unresponsive models.",
   "agents.defaults.compaction.model":

@@ -12,8 +12,10 @@ import { createInboundDebouncer } from "openclaw/plugin-sdk/channel-inbound-debo
 import { getChildLogger } from "openclaw/plugin-sdk/logging-core";
 import { defaultRuntime } from "openclaw/plugin-sdk/runtime-env";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
+import { maybeResolveWhatsAppApprovalReaction } from "../approval-reactions.js";
 import { readWebSelfIdentityForDecision, WhatsAppAuthUnstableError } from "../auth-store.js";
 import { getPrimaryIdentityId, resolveComparableIdentity } from "../identity.js";
+import { addWhatsAppImagePreviewFields } from "../image-preview.js";
 import { cacheInboundMessageMeta } from "../quoted-message.js";
 import { DEFAULT_RECONNECT_POLICY, computeBackoff, sleepWithAbort } from "../reconnect.js";
 import type { OpenClawConfig } from "../runtime-api.js";
@@ -941,9 +943,10 @@ export async function attachWebInboxToSocket(
       payload: AnyMessageContent,
       options?: MiscMessageGenerationOptions,
     ) => {
+      const previewPayload = await addWhatsAppImagePreviewFields(payload);
       const result = await sendTrackedMessage(
         chatJid,
-        await applyOutboundMentionsToContent(chatJid, payload),
+        await applyOutboundMentionsToContent(chatJid, previewPayload),
         options,
       );
       return normalizeWhatsAppSendResult(result, "media");
@@ -1054,6 +1057,20 @@ export async function attachWebInboxToSocket(
       return;
     }
     for (const msg of upsert.messages ?? []) {
+      if (
+        await maybeResolveWhatsAppApprovalReaction({
+          cfg: options.loadConfig?.() ?? options.cfg,
+          accountId: options.accountId,
+          msg,
+          selfJid: self.jid,
+          selfLid: self.lid,
+          resolveInboundJid,
+          logVerboseMessage: (message) => logWhatsAppVerbose(options.verbose, message),
+        })
+      ) {
+        continue;
+      }
+
       await processDurableInboundMessage(msg, upsert.type);
     }
   };

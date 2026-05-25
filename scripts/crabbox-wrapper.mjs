@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { accessSync, constants, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,12 @@ import { resolvePathEnvKey } from "./windows-cmd-helpers.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoLocal = resolveCrabboxBinary(process.env, process.platform);
-const binary = repoLocal ?? resolvePathBinary("crabbox", process.env, process.platform);
+const pathLocal = resolvePathBinary("crabbox", process.env, process.platform);
+const binary =
+  repoLocal ??
+  pathLocal ??
+  resolveGitCommonCrabboxBinary(process.env, process.platform) ??
+  "crabbox";
 const args = process.argv.slice(2);
 
 if (args[0] === "--") {
@@ -32,7 +37,7 @@ function commandCandidates(command, platform) {
 function resolveCrabboxBinary(env, platform) {
   const base = resolve(repoRoot, "../crabbox/bin/crabbox");
   for (const candidate of commandCandidates(base, platform)) {
-    if (isFile(candidate)) {
+    if (isExecutableFile(candidate, platform)) {
       return candidate;
     }
   }
@@ -40,29 +45,55 @@ function resolveCrabboxBinary(env, platform) {
 }
 
 function resolvePathBinary(command, env, platform) {
-  if (platform !== "win32") {
-    return command;
-  }
-  for (const candidate of commandCandidates(command, platform)) {
-    if (isFile(candidate)) {
-      return candidate;
-    }
-  }
   const pathValue = env[resolvePathEnvKey(env)] ?? "";
   for (const dir of pathValue.split(delimiter).filter(Boolean)) {
     for (const candidate of commandCandidates(command, platform)) {
       const fullPath = resolve(dir, candidate);
-      if (isFile(fullPath)) {
+      if (isExecutableFile(fullPath, platform)) {
         return fullPath;
       }
     }
   }
-  return command;
+  return null;
 }
 
-function isFile(path) {
+function resolveGitCommonCrabboxBinary(env, platform) {
+  const gitBinary = resolvePathBinary("git", env, platform) ?? "git";
+  const invocation = spawnInvocation(gitBinary, ["rev-parse", "--git-common-dir"], env, platform);
+  const result = spawnSync(invocation.command, invocation.args, {
+    cwd: repoRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+  });
+  if ((result.status ?? 1) !== 0) {
+    return null;
+  }
+  const gitCommonDir = result.stdout.trim();
+  if (!gitCommonDir) {
+    return null;
+  }
+  const absoluteGitCommonDir = isAbsolute(gitCommonDir)
+    ? gitCommonDir
+    : resolve(repoRoot, gitCommonDir);
+  const base = resolve(absoluteGitCommonDir, "../..", "crabbox/bin/crabbox");
+  for (const candidate of commandCandidates(base, platform)) {
+    if (isExecutableFile(candidate, platform)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function isExecutableFile(path, platform) {
   try {
-    return statSync(path).isFile();
+    if (!statSync(path).isFile()) {
+      return false;
+    }
+    if (platform !== "win32") {
+      accessSync(path, constants.X_OK);
+    }
+    return true;
   } catch {
     return false;
   }
@@ -116,7 +147,7 @@ function checkedOutput(command, commandArgs) {
 }
 
 function gitOutput(commandArgs) {
-  const gitBinary = resolvePathBinary("git", process.env, process.platform);
+  const gitBinary = resolvePathBinary("git", process.env, process.platform) ?? "git";
   const invocation = spawnInvocation(gitBinary, commandArgs, process.env, process.platform);
   const result = spawnSync(invocation.command, invocation.args, {
     cwd: repoRoot,
@@ -359,6 +390,31 @@ function hasOption(commandArgs, name) {
   return false;
 }
 
+function commandOptionEnd(commandArgs) {
+  if (commandArgs[0] === "run") {
+    return runCommandBounds(commandArgs).optionEnd;
+  }
+  const delimiter = commandArgs.indexOf("--");
+  return delimiter >= 0 ? delimiter : commandArgs.length;
+}
+
+function ensureAwsMacOnDemandMarket(commandArgs, providerName) {
+  if (
+    !["run", "warmup"].includes(commandArgs[0]) ||
+    providerName !== "aws" ||
+    optionValue(commandArgs, "--target") !== "macos" ||
+    hasOption(commandArgs, "--market") ||
+    hasOption(commandArgs, "--id")
+  ) {
+    return commandArgs;
+  }
+
+  const optionEnd = commandOptionEnd(commandArgs);
+  const normalizedArgs = [...commandArgs];
+  normalizedArgs.splice(optionEnd, 0, "--market", "on-demand");
+  return normalizedArgs;
+}
+
 const localPathRunOptions = new Set([
   "capture-stderr",
   "capture-stdout",
@@ -417,6 +473,21 @@ function absolutizeLocalRunPaths(commandArgs) {
   return normalizedArgs;
 }
 
+function shellQuote(value) {
+  const text = `${value}`;
+  if (text === "") {
+    return "''";
+  }
+  if (/^[A-Za-z0-9_./:=@%+-]+$/u.test(text)) {
+    return text;
+  }
+  return `'${text.replaceAll("'", "'\\''")}'`;
+}
+
+function shellJoin(commandArgs) {
+  return commandArgs.map(shellQuote).join(" ");
+}
+
 function isLocalContainerProvider(providerName) {
   return ["local-container", "docker", "container", "local-docker"].includes(providerName);
 }
@@ -426,8 +497,8 @@ function runCommandArgs(commandArgs) {
   return start >= 0 ? commandArgs.slice(start) : [];
 }
 
-function commandRuntimeEntrypoint(commandArgs) {
-  const words = commandArgs.length === 1 ? commandArgs[0].split(/\s+/u) : commandArgs;
+function normalizedCommandWords(commandArgs) {
+  const words = commandArgs.length === 1 ? commandArgs[0].split(/\s+/u) : [...commandArgs];
   while (words[0] === "env") {
     words.shift();
     while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0] ?? "")) {
@@ -437,11 +508,158 @@ function commandRuntimeEntrypoint(commandArgs) {
   while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0] ?? "")) {
     words.shift();
   }
-  const first = (words[0] ?? "")
-    .replace(/^['"]|['";|&()]+$/g, "")
-    .split("/")
-    .pop();
+  return words.map((word) => word.replace(/^['"]|['";|&()]+$/g, ""));
+}
+
+function commandRuntimeEntrypoint(commandArgs) {
+  const words = normalizedCommandWords(commandArgs);
+  const first = (words[0] ?? "").split("/").pop();
   return ["pnpm", "npm", "npx", "corepack", "node", "yarn", "bun"].includes(first) ? first : "";
+}
+
+function isChangedGateCommand(commandArgs) {
+  const words = normalizedCommandWords(commandArgs);
+  if (words[0] === "corepack") {
+    words.shift();
+  }
+  return (
+    (words[0] === "pnpm" && words[1] === "check:changed") ||
+    (words[0] === "pnpm" && words[1] === "run" && words[2] === "check:changed") ||
+    (words[0] === "node" && (words[1] ?? "").endsWith("scripts/check-changed.mjs"))
+  );
+}
+
+function mergeBaseForChangedGate() {
+  const base = gitOutput(["merge-base", "origin/main", "HEAD"]);
+  return base.status === 0 && base.stdout ? base.stdout : "origin/main";
+}
+
+function remoteGitBootstrapForChangedGate(changedGateBase) {
+  const quotedBase = shellQuote(changedGateBase);
+  return [
+    "if ! git rev-parse --git-dir >/dev/null 2>&1; then",
+    "git init -q;",
+    "git remote add origin https://github.com/openclaw/openclaw.git 2>/dev/null || git remote set-url origin https://github.com/openclaw/openclaw.git;",
+    `git fetch -q --depth=1 origin ${quotedBase}:refs/remotes/origin/main;`,
+    "git reset --mixed --quiet refs/remotes/origin/main;",
+    "git add -A;",
+    "if ! git diff --cached --quiet; then git -c user.name=OpenClaw -c user.email=ci@openclaw.local commit -q --no-gpg-sign -m remote-changed-gate-tree; fi;",
+    "fi",
+  ].join(" ");
+}
+
+function isWindowsRemoteTarget(commandArgs) {
+  return (
+    optionValue(commandArgs, "--target") === "windows" || hasOption(commandArgs, "--windows-mode")
+  );
+}
+
+function isAwsMacosRemoteTarget(commandArgs, providerName) {
+  return (
+    commandArgs[0] === "run" &&
+    providerName === "aws" &&
+    optionValue(commandArgs, "--target") === "macos"
+  );
+}
+
+function injectRemoteChangedGateGitBootstrap(commandArgs, changedGateBase) {
+  if (!changedGateBase || commandArgs[0] !== "run" || isWindowsRemoteTarget(commandArgs)) {
+    return commandArgs;
+  }
+
+  const { start, optionEnd } = runCommandBounds(commandArgs);
+  if (start < 0) {
+    return commandArgs;
+  }
+
+  const normalizedArgs = [...commandArgs];
+  const remoteCommand = normalizedArgs.slice(start);
+  const originalShellCommand =
+    hasOption(normalizedArgs, "--shell") && remoteCommand.length === 1
+      ? remoteCommand[0]
+      : shellJoin(remoteCommand);
+  const shellCommand = `${remoteGitBootstrapForChangedGate(changedGateBase)} && ${originalShellCommand}`;
+
+  if (!hasOption(normalizedArgs, "--shell")) {
+    normalizedArgs.splice(optionEnd, 0, "--shell");
+  }
+
+  const updatedBounds = runCommandBounds(normalizedArgs);
+  normalizedArgs.splice(
+    updatedBounds.start,
+    normalizedArgs.length - updatedBounds.start,
+    shellCommand,
+  );
+  return normalizedArgs;
+}
+
+function remoteAwsMacosJsBootstrap() {
+  const nodeVersion = process.env.OPENCLAW_CRABBOX_MACOS_NODE_VERSION?.trim() || "24.15.0";
+  return [
+    "openclaw_crabbox_bootstrap_macos_js() {",
+    'tool_root="${OPENCLAW_CRABBOX_MACOS_TOOLCHAIN_DIR:-$HOME/.openclaw-crabbox-toolchain}";',
+    'pnpm_home="${PNPM_HOME:-$tool_root/pnpm-home}";',
+    `node_version=${shellQuote(nodeVersion)};`,
+    'arch="$(uname -m)";',
+    'case "$arch" in arm64) node_arch=arm64 ;; x86_64) node_arch=x64 ;; *) echo "unsupported macOS arch: $arch" >&2; return 2 ;; esac;',
+    'node_dir="$tool_root/node-v${node_version}-darwin-${node_arch}";',
+    'export PATH="$node_dir/bin:$pnpm_home:$PATH";',
+    'if [ ! -x "$node_dir/bin/node" ]; then',
+    'tmp_dir="$(mktemp -d)" || return 1;',
+    'pkg="node-v${node_version}-darwin-${node_arch}.tar.gz";',
+    'base_url="https://nodejs.org/dist/v${node_version}";',
+    'mkdir -p "$tool_root" || { status=$?; rm -rf "$tmp_dir"; return "$status"; };',
+    'curl -fsSLo "$tmp_dir/$pkg" "$base_url/$pkg" || { status=$?; rm -rf "$tmp_dir"; return "$status"; };',
+    'curl -fsSLo "$tmp_dir/SHASUMS256.txt" "$base_url/SHASUMS256.txt" || { status=$?; rm -rf "$tmp_dir"; return "$status"; };',
+    '(cd "$tmp_dir" && grep " $pkg$" SHASUMS256.txt | shasum -a 256 -c -) || { status=$?; rm -rf "$tmp_dir"; return "$status"; };',
+    'rm -rf "$node_dir" || { status=$?; rm -rf "$tmp_dir"; return "$status"; };',
+    'tar -xzf "$tmp_dir/$pkg" -C "$tool_root" || { status=$?; rm -rf "$tmp_dir"; return "$status"; };',
+    'rm -rf "$tmp_dir";',
+    "fi;",
+    'export COREPACK_HOME="${COREPACK_HOME:-$tool_root/corepack}";',
+    'export PNPM_HOME="$pnpm_home";',
+    'mkdir -p "$COREPACK_HOME" "$PNPM_HOME" || return 1;',
+    'export PATH="$PNPM_HOME:$PATH";',
+    'corepack enable --install-directory "$PNPM_HOME" || return 1;',
+    "node --version >&2;",
+    "pnpm --version >&2;",
+    "};",
+    "openclaw_crabbox_bootstrap_macos_js",
+  ].join(" ");
+}
+
+function injectRemoteAwsMacosJsBootstrap(commandArgs, providerName) {
+  if (
+    !isAwsMacosRemoteTarget(commandArgs, providerName) ||
+    !commandRuntimeEntrypoint(runCommandArgs(commandArgs))
+  ) {
+    return commandArgs;
+  }
+
+  const { start, optionEnd } = runCommandBounds(commandArgs);
+  if (start < 0) {
+    return commandArgs;
+  }
+
+  const normalizedArgs = [...commandArgs];
+  const remoteCommand = normalizedArgs.slice(start);
+  const originalShellCommand =
+    hasOption(normalizedArgs, "--shell") && remoteCommand.length === 1
+      ? remoteCommand[0]
+      : shellJoin(remoteCommand);
+  const shellCommand = `${remoteAwsMacosJsBootstrap()} && { ${originalShellCommand}\n}`;
+
+  if (!hasOption(normalizedArgs, "--shell")) {
+    normalizedArgs.splice(optionEnd, 0, "--shell");
+  }
+
+  const updatedBounds = runCommandBounds(normalizedArgs);
+  normalizedArgs.splice(
+    updatedBounds.start,
+    normalizedArgs.length - updatedBounds.start,
+    shellCommand,
+  );
+  return normalizedArgs;
 }
 
 function isSparseCheckout() {
@@ -457,8 +675,8 @@ function isWorktreeClean() {
   return gitOutput(["status", "--porcelain=v1"]).stdout === "";
 }
 
-function shouldUseFullCheckoutForCleanSparseBlacksmithSync(commandArgs, providerName) {
-  if (commandArgs[0] !== "run" || providerName !== "blacksmith-testbox") {
+function shouldUseFullCheckoutForCleanSparseRemoteSync(commandArgs, providerName) {
+  if (commandArgs[0] !== "run" || isLocalContainerProvider(providerName)) {
     return false;
   }
   if (hasOption(commandArgs, "--no-sync") || hasOption(commandArgs, "--id")) {
@@ -468,7 +686,7 @@ function shouldUseFullCheckoutForCleanSparseBlacksmithSync(commandArgs, provider
   return isSparseCheckout() && isWorktreeClean();
 }
 
-function prepareFullCheckoutForSync() {
+function prepareFullCheckoutForSync(options = {}) {
   const dir = mkdtempSync(resolve(tmpdir(), "openclaw-crabbox-sync-"));
   let active = false;
   const add = gitOutput(["worktree", "add", "--detach", dir, "HEAD"]);
@@ -484,8 +702,17 @@ function prepareFullCheckoutForSync() {
     throw new Error(`git sparse-checkout disable failed: ${disableSparse.text}`);
   }
 
+  if (options.changedGateBase) {
+    const reset = gitOutput(["-C", dir, "reset", "--mixed", "--quiet", options.changedGateBase]);
+    if (reset.status !== 0) {
+      cleanupFullCheckout(dir, active);
+      throw new Error(`git reset for changed-gate sync failed: ${reset.text}`);
+    }
+  }
+
   return {
     dir,
+    changedGateBase: options.changedGateBase ?? "",
     cleanup() {
       cleanupFullCheckout(dir, active);
       active = false;
@@ -599,6 +826,7 @@ const providers = parseProvidersFromHelp(help.text);
 const displayBinary = binary === "crabbox" ? "crabbox" : relative(repoRoot, binary);
 const provider = selectedProvider(args);
 const commandProviderValue = commandProvider(args);
+const normalizedArgs = ensureAwsMacOnDemandMarket(args, provider);
 
 console.error(
   `[crabbox] bin=${displayBinary} version=${version.text || "unknown"} provider=${provider || "unknown"} providers=${providers.join(",") || "unknown"}`,
@@ -642,13 +870,22 @@ if (provider === "blacksmith-testbox") {
 let childCwd = repoRoot;
 let cleanupChildCwd = () => {};
 let cleanupDone = false;
-if (shouldUseFullCheckoutForCleanSparseBlacksmithSync(args, provider)) {
-  const checkout = prepareFullCheckoutForSync();
+let remoteChangedGateBase = "";
+if (shouldUseFullCheckoutForCleanSparseRemoteSync(normalizedArgs, provider)) {
+  const runWords = runCommandArgs(normalizedArgs);
+  const changedGateBase = isChangedGateCommand(runWords) ? mergeBaseForChangedGate() : "";
+  const checkout = prepareFullCheckoutForSync({ changedGateBase });
   childCwd = checkout.dir;
   cleanupChildCwd = () => checkout.cleanup();
+  remoteChangedGateBase = checkout.changedGateBase;
   console.error(
     `[crabbox] sparse clean checkout detected; syncing from temporary full checkout ${checkout.dir}`,
   );
+  if (checkout.changedGateBase) {
+    console.error(
+      `[crabbox] remote changed gate detected; overlaying local HEAD as worktree changes from ${checkout.changedGateBase}`,
+    );
+  }
 }
 
 function cleanupOnce() {
@@ -659,22 +896,28 @@ function cleanupOnce() {
   cleanupChildCwd();
 }
 
-const runtimeEntrypoint = commandRuntimeEntrypoint(runCommandArgs(args));
-if (args[0] === "run" && provider === "aws" && runtimeEntrypoint) {
-  const id = optionValue(args, "--id");
-  const hydrate = id
-    ? `pnpm crabbox:hydrate -- --id ${id}`
-    : "pnpm crabbox:warmup, then pnpm crabbox:hydrate -- --id <id>";
-  console.error(
-    `[crabbox] warning: provider=aws raw boxes may lack Node/Corepack/pnpm for ${runtimeEntrypoint}; hydrate first (${hydrate}) or pass --provider blacksmith-testbox for OpenClaw CI-like proof; not switching providers automatically`,
-  );
+const runtimeEntrypoint = commandRuntimeEntrypoint(runCommandArgs(normalizedArgs));
+if (normalizedArgs[0] === "run" && provider === "aws" && runtimeEntrypoint) {
+  if (isAwsMacosRemoteTarget(normalizedArgs, provider)) {
+    console.error(
+      `[crabbox] provider=aws macOS raw boxes may lack Node/Corepack/pnpm for ${runtimeEntrypoint}; bootstrapping a pinned user-local Node toolchain before the command`,
+    );
+  } else {
+    const id = optionValue(normalizedArgs, "--id");
+    const hydrate = id
+      ? `pnpm crabbox:hydrate -- --id ${id}`
+      : "pnpm crabbox:warmup, then pnpm crabbox:hydrate -- --id <id>";
+    console.error(
+      `[crabbox] warning: provider=aws raw boxes may lack Node/Corepack/pnpm for ${runtimeEntrypoint}; hydrate first (${hydrate}) or pass --provider blacksmith-testbox for OpenClaw CI-like proof; not switching providers automatically`,
+    );
+  }
 }
 
 const childEnv = { ...process.env };
 if (
   isLocalContainerProvider(provider) &&
   !childEnv.CRABBOX_LOCAL_CONTAINER_DOCKER_SOCKET &&
-  !hasOption(args, "--local-container-docker-socket")
+  !hasOption(normalizedArgs, "--local-container-docker-socket")
 ) {
   childEnv.CRABBOX_LOCAL_CONTAINER_DOCKER_SOCKET = "1";
   console.error(
@@ -685,7 +928,7 @@ if (
   isLocalContainerProvider(provider) &&
   process.platform !== "win32" &&
   !childEnv.CRABBOX_LOCAL_CONTAINER_WORK_ROOT &&
-  !hasOption(args, "--local-container-work-root")
+  !hasOption(normalizedArgs, "--local-container-work-root")
 ) {
   childEnv.CRABBOX_LOCAL_CONTAINER_WORK_ROOT = "/tmp/openclaw-crabbox-docker-work";
   console.error(
@@ -693,7 +936,13 @@ if (
   );
 }
 
-const childArgs = childCwd === repoRoot ? args : absolutizeLocalRunPaths(args);
+const childArgs =
+  childCwd === repoRoot
+    ? injectRemoteAwsMacosJsBootstrap(normalizedArgs, provider)
+    : injectRemoteChangedGateGitBootstrap(
+        injectRemoteAwsMacosJsBootstrap(absolutizeLocalRunPaths(normalizedArgs), provider),
+        remoteChangedGateBase,
+      );
 const childInvocation = spawnInvocation(binary, childArgs, childEnv, process.platform);
 const child = spawn(childInvocation.command, childInvocation.args, {
   cwd: childCwd,

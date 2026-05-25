@@ -1,8 +1,9 @@
 import { chmodSync, copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, join, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
+import { resolveHostCommandInvocation } from "../../scripts/e2e/parallels/host-command.ts";
 import { execNodeEvalSync, spawnNodeEvalSync } from "../../src/test-utils/node-process.js";
 
 const WRAPPERS = {
@@ -231,6 +232,56 @@ console.log([snapshot.id, snapshot.state, snapshot.name].join("\\t"));
     }
   });
 
+  it("resolves a latest snapshot hint to the matching version before older LATEST labels", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "openclaw-parallels-snapshot-latest-"));
+    writeFakePrlctl(
+      tempDir,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "snapshot-list" ]]; then
+  cat <<'JSON'
+{
+  "{old}": {"name": "macOS 26.3.1 LATEST", "state": "poweron"},
+  "{wanted}": {"name": "macOS 26.5", "state": "poweron"}
+}
+JSON
+  exit 0
+fi
+exit 1
+`,
+      `import { basename } from "node:path";
+const isPrlctl = [process.argv0, process.execPath].some((value) =>
+  basename(value).toLowerCase() === "prlctl.exe",
+);
+if (isPrlctl) {
+  if (process.argv.some((arg) => arg.includes("snapshot-list"))) {
+    console.log(JSON.stringify({
+      "{old}": { name: "macOS 26.3.1 LATEST", state: "poweron" },
+      "{wanted}": { name: "macOS 26.5", state: "poweron" },
+    }));
+    process.exit(0);
+  }
+  process.exit(1);
+}
+`,
+    );
+
+    try {
+      const output = runTsEval(
+        `
+import { resolveSnapshot } from "./${TS_PATHS.common}";
+const snapshot = resolveSnapshot("vm", "macOS 26.5 latest");
+console.log([snapshot.id, snapshot.state, snapshot.name].join("\\t"));
+`,
+        fakePrlctlEnv(tempDir),
+      );
+
+      expect(output.trim()).toBe("{wanted}\tpoweron\tmacOS 26.5");
+    } finally {
+      rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
   it("uses one Ubuntu VM fallback resolver for Linux lanes", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "openclaw-parallels-vm-helper-"));
     writeFakePrlctl(
@@ -240,6 +291,7 @@ set -euo pipefail
 if [[ "$1" == "list" ]]; then
   cat <<'JSON'
 [
+  {"name": "Ubuntu 26.04"},
   {"name": "Ubuntu 25.10"},
   {"name": "Ubuntu 23.10"},
   {"name": "Ubuntu 24.04.3 ARM64"}
@@ -256,6 +308,7 @@ const isPrlctl = [process.argv0, process.execPath].some((value) =>
 if (isPrlctl) {
   if (process.argv.some((arg) => arg.includes("list"))) {
     console.log(JSON.stringify([
+      { name: "Ubuntu 26.04" },
       { name: "Ubuntu 25.10" },
       { name: "Ubuntu 23.10" },
       { name: "Ubuntu 24.04.3 ARM64" },
@@ -276,7 +329,7 @@ console.log(resolveUbuntuVmName("Ubuntu missing"));
         fakePrlctlEnv(tempDir),
       );
 
-      expect(output.trim()).toBe("Ubuntu 24.04.3 ARM64");
+      expect(output.trim()).toBe("Ubuntu 26.04");
     } finally {
       rmSync(tempDir, { force: true, recursive: true });
     }
@@ -555,6 +608,55 @@ console.log(JSON.stringify(result));
 
     expect(result.status).toBe(124);
     expect(result.stdout).toBeTypeOf("string");
+  });
+
+  it("routes Windows host pnpm and npm shims through safe runners", () => {
+    const comSpec = "C:\\Windows\\System32\\cmd.exe";
+
+    expect(
+      resolveHostCommandInvocation("pnpm", ["build"], {
+        env: {
+          ComSpec: comSpec,
+          npm_execpath: "C:\\Tools\\pnpm.cmd",
+        },
+        platform: "win32",
+      }),
+    ).toEqual({
+      args: ["/d", "/s", "/c", "C:\\Tools\\pnpm.cmd build"],
+      command: comSpec,
+      shell: false,
+      windowsVerbatimArguments: true,
+    });
+
+    const execPath = "C:\\nodejs\\node.exe";
+    const npmCmdPath = win32.resolve(win32.dirname(execPath), "npm.cmd");
+    expect(
+      resolveHostCommandInvocation("npm", ["view", "openclaw", "version"], {
+        env: { ComSpec: comSpec },
+        execPath,
+        existsSync: (candidate) => candidate === npmCmdPath,
+        platform: "win32",
+      }),
+    ).toEqual({
+      args: ["/d", "/s", "/c", `${npmCmdPath} view openclaw version`],
+      command: comSpec,
+      shell: false,
+      windowsVerbatimArguments: true,
+    });
+  });
+
+  it("wraps explicit Windows batch host commands without shell mode", () => {
+    expect(
+      resolveHostCommandInvocation("C:\\Tools\\helper.cmd", ["@scope/pkg@^1.0.0"], {
+        comSpec: "cmd.exe",
+        platform: "win32",
+      }),
+    ).toEqual({
+      args: ["/d", "/s", "/c", "C:\\Tools\\helper.cmd @scope/pkg@^^1.0.0"],
+      command: "cmd.exe",
+      shell: false,
+      windowsVerbatimArguments: true,
+    });
   });
 
   it("runs the Windows agent turn through the detached done-file runner", () => {

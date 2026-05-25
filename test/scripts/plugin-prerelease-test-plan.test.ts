@@ -189,8 +189,10 @@ describe("scripts/lib/plugin-prerelease-test-plan.mjs", () => {
     expect(walkScript).toContain("tts.providers");
     expect(walkScript).toContain("plugins.uiDescriptors");
     expect(walkScript).toContain("loadCallGatewayModule(options.runner)");
-    expect(walkScript).toContain("usesPackagedOpenClawEntry(runner)");
-    expect(walkScript).toContain("src/gateway/call.ts");
+    expect(walkScript).toContain("usesBuiltOpenClawEntry(runner)");
+    expect(walkScript).toContain('"gateway"');
+    expect(walkScript).toContain('"call"');
+    expect(walkScript).not.toContain("src/gateway/call.ts");
     expect(walkScript).toContain("^call(?:\\.runtime)?");
   });
 
@@ -277,7 +279,7 @@ describe("scripts/lib/plugin-prerelease-test-plan.mjs", () => {
           with: {
             "fetch-depth": 1,
             "fetch-tags": false,
-            "persist-credentials": false,
+            "persist-credentials": true,
             ref: "${{ needs.preflight.outputs.checkout_revision }}",
             submodules: false,
           },
