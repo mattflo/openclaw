@@ -9,6 +9,18 @@ const bundledRuntimeFragments = (pluginDir) => [
   `/dist/extensions/${pluginDir}`,
   `/dist-runtime/extensions/${pluginDir}`,
 ];
+const bundledRuntimeRootFragments = ["/dist/extensions/", "/dist-runtime/extensions/"];
+const DEFAULT_PLUGIN_LIST_TIMEOUT_MS = 30_000;
+const DEFAULT_PLUGIN_LIST_MAX_BUFFER_BYTES = 4 * 1024 * 1024;
+
+function positiveEnvInt(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") {
+    return fallback;
+  }
+  const value = Number.parseInt(raw, 10);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
 
 function resolveStateDir() {
   if (process.env.OPENCLAW_STATE_DIR) {
@@ -20,6 +32,11 @@ function resolveStateDir() {
 function pathReferencesBundledRuntime(value, pluginDir) {
   const normalized = normalizePathForProbe(value);
   return bundledRuntimeFragments(pluginDir).some((fragment) => normalized.includes(fragment));
+}
+
+function pathReferencesPackagedBundledRoot(value) {
+  const normalized = normalizePathForProbe(value);
+  return bundledRuntimeRootFragments.some((fragment) => normalized.includes(fragment));
 }
 
 function resolveOpenClawEntry() {
@@ -36,11 +53,29 @@ function resolveOpenClawEntry() {
 
 function readPluginsList() {
   const entry = resolveOpenClawEntry();
+  const timeoutMs = positiveEnvInt(
+    "OPENCLAW_BUNDLED_PLUGIN_LIST_TIMEOUT_MS",
+    DEFAULT_PLUGIN_LIST_TIMEOUT_MS,
+  );
   const result = spawnSync(process.execPath, [entry, "plugins", "list", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
     env: process.env,
+    maxBuffer: positiveEnvInt(
+      "OPENCLAW_BUNDLED_PLUGIN_LIST_MAX_BUFFER_BYTES",
+      DEFAULT_PLUGIN_LIST_MAX_BUFFER_BYTES,
+    ),
+    killSignal: "SIGKILL",
+    timeout: timeoutMs,
   });
+  if (result.error) {
+    const timedOut = result.error.code === "ETIMEDOUT";
+    throw new Error(
+      timedOut
+        ? `Timed out listing packaged bundled plugins after ${timeoutMs}ms`
+        : `Unable to list packaged bundled plugins: ${result.error.message}`,
+    );
+  }
   if (result.status !== 0) {
     throw new Error(
       `Unable to list packaged bundled plugins: ${result.stderr || result.stdout || `exit ${result.status}`}`,
@@ -68,7 +103,7 @@ async function loadPackagedBundledEntries() {
       const rootDir = typeof plugin.rootDir === "string" ? plugin.rootDir.trim() : "";
       const source = typeof plugin.source === "string" ? plugin.source.trim() : "";
       const pluginDir = rootDir || (source ? path.dirname(source) : "");
-      if (!id || !pluginDir) {
+      if (!id || !pluginDir || !pathReferencesPackagedBundledRoot(pluginDir)) {
         return null;
       }
       return {

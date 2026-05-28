@@ -7,9 +7,12 @@ import { setTimeout as sleepTimeout } from "node:timers/promises";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { parseStrictPositiveInteger } from "openclaw/plugin-sdk/number-runtime";
 import {
   normalizeOptionalString,
   readStringValue,
+  uniqueStrings,
+  uniqueValues,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { resolvePreferredOpenClawTmpDir } from "../infra/tmp-openclaw-dir.js";
 import { redactToolPayloadText } from "../logging/redact.js";
@@ -140,8 +143,8 @@ function asPages(value: unknown): ChromeMcpStructuredPage[] {
 }
 
 function parsePageId(targetId: string): number {
-  const parsed = Number.parseInt(targetId.trim(), 10);
-  if (!Number.isFinite(parsed)) {
+  const parsed = parseStrictPositiveInteger(targetId);
+  if (parsed === undefined) {
     throw new BrowserTabNotFoundError();
   }
   return parsed;
@@ -558,7 +561,7 @@ async function terminateChromeMcpProcessTree(
 
   const killProcess = deps?.killProcess ?? ((pid, signal) => process.kill(pid, signal));
   const sleep = deps?.sleep ?? sleepTimeout;
-  const pids = Array.from(new Set([...descendantPids.toReversed(), rootPid])).filter(
+  const pids = uniqueValues([...descendantPids.toReversed(), rootPid]).filter(
     (pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid,
   );
   const signaled: number[] = [];
@@ -1107,7 +1110,7 @@ export async function closeChromeMcpSession(profileName: string): Promise<boolea
 }
 
 export async function stopAllChromeMcpSessions(): Promise<void> {
-  const names = [...new Set([...sessions.keys()].map((key) => JSON.parse(key)[0] as string))];
+  const names = uniqueStrings([...sessions.keys()].map((key) => JSON.parse(key)[0] as string));
   for (const name of names) {
     await closeChromeMcpSession(name).catch(() => {});
   }

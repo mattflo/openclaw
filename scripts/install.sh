@@ -624,6 +624,21 @@ is_arch_linux() {
     return 1
 }
 
+is_alpine_linux() {
+    if [[ -f /etc/alpine-release ]]; then
+        return 0
+    fi
+    if [[ -f /etc/os-release ]]; then
+        local os_id os_id_like
+        os_id="$(grep -E '^ID=' /etc/os-release 2>/dev/null | cut -d'=' -f2 | tr -d '"' || true)"
+        os_id_like="$(grep -E '^ID_LIKE=' /etc/os-release 2>/dev/null | cut -d'=' -f2 | tr -d '"' || true)"
+        if [[ "$os_id" == "alpine" || "$os_id_like" == *alpine* ]]; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
 apt_get() {
     if is_root; then
         env DEBIAN_FRONTEND="${DEBIAN_FRONTEND:-noninteractive}" NEEDRESTART_MODE="${NEEDRESTART_MODE:-a}" apt-get "$@"
@@ -679,7 +694,7 @@ install_build_tools_linux() {
         return 0
     fi
 
-    if command -v apk &> /dev/null; then
+    if command -v apk &> /dev/null && is_alpine_linux; then
         if is_root; then
             run_quiet_step "Installing build tools" apk add --no-cache build-base python3 cmake
         else
@@ -1217,10 +1232,18 @@ parse_args() {
                 shift
                 ;;
             --install-method|--method)
+                if [[ $# -lt 2 || "${2:-}" == --* ]]; then
+                    ui_error "Missing value for $1"
+                    return 2
+                fi
                 INSTALL_METHOD="$2"
                 shift 2
                 ;;
             --version)
+                if [[ $# -lt 2 || "${2:-}" == --* ]]; then
+                    ui_error "Missing value for $1"
+                    return 2
+                fi
                 OPENCLAW_VERSION="$2"
                 shift 2
                 ;;
@@ -1237,6 +1260,10 @@ parse_args() {
                 shift
                 ;;
             --git-dir|--dir)
+                if [[ $# -lt 2 || "${2:-}" == --* ]]; then
+                    ui_error "Missing value for $1"
+                    return 2
+                fi
                 GIT_DIR="$2"
                 shift 2
                 ;;
@@ -1245,7 +1272,8 @@ parse_args() {
                 shift
                 ;;
             *)
-                shift
+                ui_error "Unknown option: $1"
+                return 2
                 ;;
         esac
     done
@@ -1715,6 +1743,44 @@ finish_linux_node_install() {
     print_active_node_paths || true
 }
 
+install_node_with_apk() {
+    ui_info "Installing Node.js via apk (Alpine Linux detected)"
+    if is_root; then
+        run_quiet_step "Installing Node.js" apk add --no-cache nodejs npm
+    else
+        run_quiet_step "Installing Node.js" sudo apk add --no-cache nodejs npm
+    fi
+
+    activate_supported_node_on_path || true
+    if node_is_at_least_required; then
+        finish_linux_node_install
+        return 0
+    fi
+
+    local apk_node_version
+    apk_node_version="$(node -v 2>/dev/null || echo "missing")"
+    ui_warn "Alpine nodejs package installed ${apk_node_version}, below required v${NODE_MIN_VERSION}+"
+    ui_info "Trying Alpine nodejs-current package"
+    if is_root; then
+        run_quiet_step "Installing nodejs-current" apk add --no-cache nodejs-current npm
+    else
+        run_quiet_step "Installing nodejs-current" sudo apk add --no-cache nodejs-current npm
+    fi
+
+    activate_supported_node_on_path || true
+    if node_is_at_least_required; then
+        finish_linux_node_install
+        return 0
+    fi
+
+    local active_path active_version
+    active_path="$(command -v node 2>/dev/null || echo "not found")"
+    active_version="$(node -v 2>/dev/null || echo "missing")"
+    ui_error "Alpine apk repositories did not provide Node.js v${NODE_MIN_VERSION}+; found ${active_version} (${active_path})"
+    echo "Use Alpine 3.21+ or install Node.js ${NODE_DEFAULT_MAJOR} manually, then rerun the installer."
+    exit 1
+}
+
 # Install Node.js
 install_node() {
     if [[ "$OS" == "macos" ]]; then
@@ -1751,14 +1817,8 @@ install_node() {
             return 0
         fi
 
-        if command -v apk &> /dev/null; then
-            ui_info "Installing Node.js via apk (Alpine Linux detected)"
-            if is_root; then
-                run_quiet_step "Installing Node.js" apk add --no-cache nodejs npm
-            else
-                run_quiet_step "Installing Node.js" sudo apk add --no-cache nodejs npm
-            fi
-            finish_linux_node_install
+        if command -v apk &> /dev/null && is_alpine_linux; then
+            install_node_with_apk
             return 0
         fi
 
@@ -1854,10 +1914,17 @@ require_sudo() {
 
 install_git() {
     if [[ "$OS" == "macos" ]]; then
+        install_homebrew
         run_quiet_step "Installing Git" brew install git
     elif [[ "$OS" == "linux" ]]; then
         require_sudo
-        if command -v apt-get &> /dev/null; then
+        if command -v apk &> /dev/null && is_alpine_linux; then
+            if is_root; then
+                run_quiet_step "Installing Git" apk add --no-cache git
+            else
+                run_quiet_step "Installing Git" sudo apk add --no-cache git
+            fi
+        elif command -v apt-get &> /dev/null; then
             run_quiet_step "Updating package index" apt_get_update
             run_quiet_step "Installing Git" apt_get_install git
         elif command -v pacman &> /dev/null || is_arch_linux; then
@@ -2203,7 +2270,7 @@ ensure_user_local_bin_on_path() {
 
 npm_global_bin_dir() {
     local prefix=""
-    prefix="$(npm prefix -g 2>/dev/null || true)"
+    prefix="$(bounded_probe_output "npm prefix -g" npm prefix -g || true)"
     if [[ -n "$prefix" ]]; then
         if [[ "$prefix" == /* ]]; then
             echo "${prefix%/}/bin"
@@ -2211,7 +2278,7 @@ npm_global_bin_dir() {
         fi
     fi
 
-    prefix="$(npm config get prefix 2>/dev/null || true)"
+    prefix="$(bounded_probe_output "npm config get prefix" npm config get prefix || true)"
     if [[ -n "$prefix" && "$prefix" != "undefined" && "$prefix" != "null" ]]; then
         if [[ "$prefix" == /* ]]; then
             echo "${prefix%/}/bin"
@@ -2430,6 +2497,51 @@ maybe_nodenv_rehash() {
     fi
 }
 
+bounded_probe_output() {
+    local label="$1"
+    shift
+    local timeout_seconds="${OPENCLAW_INSTALL_PROBE_TIMEOUT_SECONDS:-5}"
+    local output_file status_file timeout_file pid watchdog status
+    output_file="$(mktemp)"
+    status_file="$(mktemp)"
+    timeout_file="$(mktemp)"
+    TMPFILES+=("$output_file" "$status_file" "$timeout_file")
+
+    (
+        "$@" >"$output_file" 2>/dev/null
+        printf '%s' "$?" >"$status_file"
+    ) &
+    pid="$!"
+
+    (
+        sleep "$timeout_seconds"
+        if kill -0 "$pid" 2>/dev/null; then
+            printf '1' >"$timeout_file"
+            kill "$pid" 2>/dev/null || true
+            sleep 0.1
+            kill -9 "$pid" 2>/dev/null || true
+            printf 'timeout' >"$status_file"
+        fi
+    ) &
+    watchdog="$!"
+
+    wait "$pid" 2>/dev/null || true
+    kill "$watchdog" 2>/dev/null || true
+    wait "$watchdog" 2>/dev/null || true
+
+    status="$(cat "$status_file" 2>/dev/null || true)"
+    if [[ -s "$timeout_file" || "$status" == "timeout" ]]; then
+        echo "Warning: timed out during installer finalization probe: ${label}" >&2
+        return 124
+    fi
+
+    cat "$output_file" 2>/dev/null || true
+    if [[ -n "$status" && "$status" =~ ^[0-9]+$ ]]; then
+        return "$status"
+    fi
+    return 1
+}
+
 warn_openclaw_not_found() {
     ui_warn "Installed, but openclaw is not discoverable on PATH in this shell"
     echo "  Try: hash -r (bash) or rehash (zsh), then retry."
@@ -2443,7 +2555,7 @@ warn_openclaw_not_found() {
     fi
 
     local npm_prefix=""
-    npm_prefix="$(npm prefix -g 2>/dev/null || true)"
+    npm_prefix="$(bounded_probe_output "npm prefix -g" npm prefix -g || true)"
     local npm_bin=""
     npm_bin="$(npm_global_bin_dir 2>/dev/null || true)"
     if [[ -n "$npm_prefix" ]]; then
@@ -2840,7 +2952,7 @@ is_gateway_daemon_loaded() {
     fi
 
     local status_json=""
-    status_json="$("$claw" daemon status --json 2>/dev/null || true)"
+    status_json="$(bounded_probe_output "openclaw daemon status --json" "$claw" daemon status --json || true)"
     if [[ -z "$status_json" ]]; then
         return 1
     fi
@@ -2989,12 +3101,11 @@ main() {
 
     ui_stage "Preparing environment"
 
-    # Step 1: Homebrew (macOS only)
-    install_homebrew
-
-    # Step 2: Node.js
+    # Step 1: Node.js. macOS package-manager branches install Homebrew lazily
+    # only when they are about to call brew.
     load_nvm_for_node_detection
     if ! check_node; then
+        install_homebrew
         install_node
     fi
     activate_supported_node_on_path || true
