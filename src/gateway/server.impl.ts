@@ -111,8 +111,18 @@ import { loadGatewayTlsRuntime } from "./server/tls.js";
 import { resolveSharedGatewaySessionGeneration } from "./server/ws-shared-generation.js";
 import { maybeSeedControlUiAllowedOriginsAtStartup } from "./startup-control-ui-origins.js";
 
+type LoadGatewayModelCatalog = typeof import("./server-model-catalog.js").loadGatewayModelCatalog;
+
+let gatewayModelCatalogModulePromise: Promise<typeof import("./server-model-catalog.js")> | null =
+  null;
+
+const loadGatewayModelCatalogModule = async () => {
+  gatewayModelCatalogModulePromise ??= import("./server-model-catalog.js");
+  return await gatewayModelCatalogModulePromise;
+};
+
 export async function resetModelCatalogCacheForTest(): Promise<void> {
-  const { resetModelCatalogCacheForTest } = await import("./server-model-catalog.js");
+  const { resetModelCatalogCacheForTest } = await loadGatewayModelCatalogModule();
   await resetModelCatalogCacheForTest();
 }
 
@@ -198,15 +208,18 @@ function loadGatewayCloseModule(): Promise<typeof import("./server-close.runtime
   return gatewayCloseModulePromise;
 }
 
-type LoadGatewayModelCatalog = typeof import("./server-model-catalog.js").loadGatewayModelCatalog;
-
-let gatewayModelCatalogModulePromise: Promise<typeof import("./server-model-catalog.js")> | null =
-  null;
-
 const loadGatewayModelCatalog: LoadGatewayModelCatalog = async (...args) => {
-  gatewayModelCatalogModulePromise ??= import("./server-model-catalog.js");
-  const mod = await gatewayModelCatalogModulePromise;
+  const mod = await loadGatewayModelCatalogModule();
   return mod.loadGatewayModelCatalog(...args);
+};
+
+let gatewayPluginBootstrapModulePromise: Promise<
+  typeof import("./server-plugin-bootstrap.js")
+> | null = null;
+
+const loadGatewayPluginBootstrapModule = async () => {
+  gatewayPluginBootstrapModulePromise ??= import("./server-plugin-bootstrap.js");
+  return await gatewayPluginBootstrapModulePromise;
 };
 
 const logHealth = log.child("health");
@@ -600,6 +613,9 @@ export async function startGatewayServer(
   const activateRuntimeSecrets = createRuntimeSecretsActivator({
     logSecrets,
     emitStateEvent: emitSecretsStateEvent,
+    ...(startupConfigLoad.pluginMetadataSnapshot
+      ? { pluginMetadataSnapshot: startupConfigLoad.pluginMetadataSnapshot }
+      : {}),
   });
 
   let cfgAtStart: OpenClawConfig;
@@ -676,6 +692,7 @@ export async function startGatewayServer(
       minimalTestGateway,
       log,
       loadRuntimePlugins: false,
+      loadSetupRuntimePlugins: true,
     }),
   );
   const {
@@ -1270,7 +1287,7 @@ export async function startGatewayServer(
       const [{ loadPluginLookUpTable }, { prepareGatewayPluginLoad }, { startPluginServices }] =
         await Promise.all([
           import("../plugins/plugin-lookup-table.js"),
-          import("./server-plugin-bootstrap.js"),
+          loadGatewayPluginBootstrapModule(),
           import("../plugins/services.js"),
         ]);
       const nextPluginLookUpTable = loadPluginLookUpTable({
@@ -1406,6 +1423,7 @@ export async function startGatewayServer(
           chatDeltaLastBroadcastText: chatRunState.deltaLastBroadcastText,
           agentDeltaSentAt: chatRunState.agentDeltaSentAt,
           bufferedAgentEvents: chatRunState.bufferedAgentEvents,
+          clearChatRunState: chatRunState.clearRun,
           addChatRun,
           removeChatRun,
           subscribeSessionEvents: sessionEventSubscribers.subscribe,
@@ -1448,7 +1466,7 @@ export async function startGatewayServer(
 
     if (!minimalTestGateway) {
       if (runtimePluginsLoaded && deferredConfiguredChannelPluginIds.length > 0) {
-        const { reloadDeferredGatewayPlugins } = await import("./server-plugin-bootstrap.js");
+        const { reloadDeferredGatewayPlugins } = await loadGatewayPluginBootstrapModule();
         const loaded = await startupTrace.measure("gateway.deferred-plugins", () =>
           reloadDeferredGatewayPlugins({
             cfg: gatewayPluginConfigAtStart,

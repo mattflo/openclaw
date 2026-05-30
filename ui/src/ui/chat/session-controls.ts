@@ -10,6 +10,7 @@ import {
 } from "../chat-model-select-state.ts";
 import { refreshVisibleToolsEffectiveForCurrentSession } from "../controllers/agents.ts";
 import { loadSessions } from "../controllers/sessions.ts";
+import { formatDateTimeMs } from "../format.ts";
 import { icons } from "../icons.ts";
 import { isMonitoredAuthProvider } from "../model-auth-helpers.ts";
 import { pathForTab } from "../navigation.ts";
@@ -495,8 +496,9 @@ function formatChatSessionPickerMeta(row: SessionsListResult["sessions"][number]
       .filter(Boolean)
       .join("/"),
   ].filter(Boolean);
-  if (typeof row.updatedAt === "number" && Number.isFinite(row.updatedAt)) {
-    parts.push(new Date(row.updatedAt).toLocaleString());
+  const updatedAt = formatDateTimeMs(row.updatedAt, undefined, "");
+  if (updatedAt) {
+    parts.push(updatedAt);
   }
   return parts.join(" · ");
 }
@@ -594,7 +596,11 @@ function renderChatSessionPickerPopover(
                 void applyChatSessionPickerSearch(state);
               }
             }}
-            @blur=${() => void applyChatSessionPickerSearch(state)}
+            @blur=${() => {
+              if (normalizeOptionalString(state.chatSessionPickerQuery)) {
+                void applyChatSessionPickerSearch(state);
+              }
+            }}
           />
         </label>
         <button

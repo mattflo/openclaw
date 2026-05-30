@@ -2,11 +2,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MAX_TIMER_TIMEOUT_MS } from "../../shared/number-coercion.js";
 import { discoverAuthStorage, discoverModels } from "../agent-model-discovery.js";
 import {
   clearRuntimeAuthProfileStoreSnapshots,
   replaceRuntimeAuthProfileStoreSnapshots,
 } from "../auth-profiles.js";
+import {
+  PLUGIN_MODEL_CATALOG_FILE,
+  PLUGIN_MODEL_CATALOG_GENERATED_BY,
+} from "../plugin-model-catalog.js";
 import { resetModelDiscoveryCacheForTest } from "./model-discovery-cache.js";
 import { createProviderRuntimeTestMock } from "./model.provider-runtime.test-support.js";
 
@@ -296,6 +301,40 @@ describe("resolveModel", () => {
     expect(discoverModels).toHaveBeenCalledTimes(1);
   });
 
+  it("invalidates agent discovery stores when generated plugin catalogs change", async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-model-cache-plugin-"));
+    const agentDir = path.join(rootDir, "agent");
+    fs.mkdirSync(agentDir, { recursive: true });
+    mockDiscoveredModel(discoverModels, {
+      provider: "zai",
+      modelId: "glm-5.1",
+      templateModel: {
+        provider: "zai",
+        ...makeModel("glm-5.1"),
+      },
+    });
+
+    const first = await resolveModelAsync("zai", "glm-5.1", agentDir, undefined, {
+      runtimeHooks: createRuntimeHooks(),
+    });
+    const catalogPath = path.join(agentDir, "plugins", "zai", PLUGIN_MODEL_CATALOG_FILE);
+    fs.mkdirSync(path.dirname(catalogPath), { recursive: true });
+    fs.writeFileSync(
+      catalogPath,
+      JSON.stringify({
+        generatedBy: PLUGIN_MODEL_CATALOG_GENERATED_BY,
+        providers: {},
+      }),
+    );
+    const second = await resolveModelAsync("zai", "glm-5.1", agentDir, undefined, {
+      runtimeHooks: createRuntimeHooks(),
+    });
+
+    expectResolvedModel(first);
+    expectResolvedModel(second);
+    expect(discoverModels).toHaveBeenCalledTimes(2);
+  });
+
   it("invalidates agent discovery stores when inherited default auth changes", async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-model-cache-"));
     const agentDir = path.join(rootDir, "agent");
@@ -334,6 +373,37 @@ describe("resolveModel", () => {
     expectResolvedModel(second);
     expect(discoverAuthStorage).toHaveBeenCalledTimes(2);
     expect(discoverModels).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the resolved default agent workspace for cached model discovery", () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-model-workspace-"));
+    const agentDir = path.join(rootDir, "agent");
+    const workspaceDir = path.join(rootDir, "workspace");
+    fs.mkdirSync(agentDir, { recursive: true });
+    mockDiscoveredModel(discoverModels, {
+      provider: "openai",
+      modelId: "gpt-5.5",
+      templateModel: {
+        provider: "openai",
+        ...makeModel("gpt-5.5"),
+      },
+    });
+    const cfg = {
+      agents: {
+        list: [{ id: "workspace-agent", default: true, agentDir, workspace: workspaceDir }],
+      },
+    } as unknown as OpenClawConfig;
+
+    const result = resolveModel("openai", "gpt-5.5", agentDir, cfg, {
+      runtimeHooks: createRuntimeHooks(),
+    });
+
+    expectResolvedModel(result);
+    expect(discoverModels).toHaveBeenCalledWith(
+      expect.anything(),
+      agentDir,
+      expect.objectContaining({ workspaceDir }),
+    );
   });
 
   it("invalidates agent discovery stores when implicit main auth changes without config", async () => {
@@ -1374,6 +1444,38 @@ describe("resolveModel", () => {
     expect(result.error).toBeUndefined();
     expect((result.model as { requestTimeoutMs?: number } | undefined)?.requestTimeoutMs).toBe(
       600_000,
+    );
+  });
+
+  it("caps oversized provider request timeout metadata at the timer-safe ceiling", () => {
+    mockDiscoveredModel(discoverModels, {
+      provider: "openai",
+      modelId: "gpt-5.5",
+      templateModel: {
+        ...makeModel("gpt-5.5"),
+        provider: "openai",
+      },
+    });
+    const cfg = {
+      models: {
+        providers: {
+          openai: {
+            timeoutSeconds: Number.MAX_SAFE_INTEGER,
+          },
+        },
+      },
+    } satisfies OpenClawConfigInput;
+
+    const result = resolveModelForTest(
+      "openai",
+      "gpt-5.5",
+      "/tmp/agent",
+      cfg as unknown as OpenClawConfig,
+    );
+
+    expect(result.error).toBeUndefined();
+    expect((result.model as { requestTimeoutMs?: number } | undefined)?.requestTimeoutMs).toBe(
+      MAX_TIMER_TIMEOUT_MS,
     );
   });
 
